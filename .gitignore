@@ -1,0 +1,37 @@
+# 環境変数
+.env
+.env.*
+
+# OS/Editor 系
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-lock.yaml
+
+# PHP
+vendor/
+composer.lock
+
+# Laravel（もし使用している場合）
+storage/
+bootstrap/cache/
+
+# ビルド・一時ファイル
+dist/
+build/
+*.log
+*.tmp
+
+# Git 管理外ファイル
+!.gitignore
+
+# 自分用バックアップなど（Dropboxなどで使うなら）
+*.bak
+*~
