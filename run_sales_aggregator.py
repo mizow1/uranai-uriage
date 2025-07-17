@@ -13,7 +13,7 @@ def main():
     
     # デフォルトのパス設定
     default_base_path = r"C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ISP支払通知書"
-    default_output_path = "sales_distribution_summary.csv"
+    default_output_path = "output.csv"
     
     # パス設定の確認
     base_path = input(f"データフォルダのパス (デフォルト: {default_base_path}): ").strip()
@@ -60,7 +60,7 @@ def main():
             platform = result['platform']
             if platform not in platform_totals:
                 platform_totals[platform] = 0
-            platform_totals[platform] += result['total_amount']
+            platform_totals[platform] += result['情報提供料合計']
         
         print("\nプラットフォーム別分配額:")
         for platform, total in platform_totals.items():

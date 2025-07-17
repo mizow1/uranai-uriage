@@ -23,34 +23,74 @@ class SalesAggregator:
             'line': []
         }
         
-        for folder in self.base_path.iterdir():
-            if folder.is_dir() and re.match(r'\d{6}', folder.name):
-                for file in folder.iterdir():
-                    if file.is_file():
-                        filename = file.name.lower()
-                        if 'satori実績_' in filename or 'satori' in filename:
-                            files_by_platform['ameba'].append(file)
-                        elif 'rcms' in filename or '楽天' in filename:
-                            files_by_platform['rakuten'].append(file)
-                        elif 'salessummary' in filename:
-                            files_by_platform['au'].append(file)
-                        elif 'excite' in filename:
-                            files_by_platform['excite'].append(file)
-                        elif 'line' in filename and (file.suffix.lower() in ['.xls', '.xlsx']):
-                            files_by_platform['line'].append(file)
+        # 年フォルダ（4桁）内の月フォルダ（6桁）を検索
+        for year_folder in self.base_path.iterdir():
+            if year_folder.is_dir() and re.match(r'\d{4}', year_folder.name):
+                for month_folder in year_folder.iterdir():
+                    if month_folder.is_dir() and re.match(r'\d{6}', month_folder.name):
+                        for file in month_folder.iterdir():
+                            if file.is_file():
+                                filename = file.name.lower()
+                                if '【株式会社アウトワード御中】satori実績_' in file.name or 'satori実績_' in filename:
+                                    files_by_platform['ameba'].append(file)
+                                elif 'rcms' in filename:
+                                    files_by_platform['rakuten'].append(file)
+                                elif 'salessummary' in filename:
+                                    files_by_platform['au'].append(file)
+                                elif 'excite' in filename:
+                                    files_by_platform['excite'].append(file)
+                                elif 'line' in filename and (file.suffix.lower() in ['.xls', '.xlsx']):
+                                    files_by_platform['line'].append(file)
         
         return files_by_platform
     
     def process_ameba_file(self, file_path):
         """ameba占い（SATORI実績）ファイルを処理"""
         try:
-            # パスワード付きExcelファイルの場合、一旦スキップ
-            # TODO: msoffcrypto-toolライブラリが必要
+            # パスワード保護されたファイルの解除を試行
+            wb = None
             try:
-                wb = openpyxl.load_workbook(file_path)
-            except:
-                print(f"ameba占いファイル処理エラー: {file_path.name} - パスワード保護ファイルの可能性があります")
-                return None
+                # 通常の読み込みを試行
+                wb = openpyxl.load_workbook(file_path, data_only=True)
+            except Exception as e:
+                if "password" in str(e).lower() or "protected" in str(e).lower() or "zip file" in str(e).lower():
+                    # パスワード保護解除を試行
+                    try:
+                        import msoffcrypto
+                        import io
+                        
+                        # よく使われるパスワードを試行
+                        common_passwords = ['', 'password', '123456', '000000', 'admin', 'user']
+                        
+                        for password in common_passwords:
+                            try:
+                                with open(file_path, 'rb') as file:
+                                    office_file = msoffcrypto.OfficeFile(file)
+                                    office_file.load_key(password=password if password else None)
+                                    
+                                    decrypted = io.BytesIO()
+                                    office_file.save(decrypted)
+                                    decrypted.seek(0)
+                                    
+                                    wb = openpyxl.load_workbook(decrypted, data_only=True)
+                                    print(f"ameba占いファイル: {file_path.name} - パスワード '{password}' で解除成功")
+                                    break
+                            except:
+                                continue
+                        
+                        if wb is None:
+                            print(f"ameba占いファイル処理エラー: {file_path.name} - パスワード解除失敗")
+                            return None
+                            
+                    except ImportError:
+                        print(f"ameba占いファイル処理エラー: {file_path.name} - msoffcrypto-toolが必要です")
+                        return None
+                    except Exception as decrypt_error:
+                        print(f"ameba占いファイル処理エラー: {file_path.name} - パスワード保護解除エラー: {str(decrypt_error)}")
+                        return None
+                else:
+                    print(f"ameba占いファイル処理エラー: {file_path.name} - {str(e)}")
+                    return None
             
             # 「従量実績」シートを読み込み
             従量実績_sheet = wb['従量実績']
@@ -65,26 +105,38 @@ class SalesAggregator:
             docomo占い_df = docomo占い_df.drop(0).reset_index(drop=True)
             
             # C列の値が一致するもののJ列の合計額を算出
-            matching_records = []
+            c_groups = {}
             for _, row in 従量実績_df.iterrows():
                 c_value = row.iloc[2]  # C列
-                matching_docomo = docomo占い_df[docomo占い_df.iloc[:, 2] == c_value]
-                if not matching_docomo.empty:
-                    j_sum = matching_docomo.iloc[:, 9].sum()  # J列
-                    matching_records.append({
-                        'content_id': c_value,
-                        'amount': j_sum
-                    })
+                if pd.notna(c_value):
+                    matching_docomo = docomo占い_df[docomo占い_df.iloc[:, 2] == c_value]
+                    if not matching_docomo.empty:
+                        # J列の値を数値に変換してから合計
+                        j_values = pd.to_numeric(matching_docomo.iloc[:, 9], errors='coerce')
+                        j_sum = j_values.sum()
+                        if pd.notna(j_sum) and j_sum > 0:
+                            if c_value not in c_groups:
+                                c_groups[c_value] = 0
+                            c_groups[c_value] += j_sum
             
-            情報提供料合計 = sum(record['amount'] for record in matching_records)
-            実績 = 情報提供料合計 / 0.3  # 30%を除算した値
+            情報提供料合計 = sum(c_groups.values())
+            実績 = 情報提供料合計 / 0.3 if 情報提供料合計 > 0 else 0  # 30%を除算した値
+            
+            # details配列の作成（コンテンツごと）
+            details = []
+            for c_value, j_sum in c_groups.items():
+                details.append({
+                    'content_group': str(c_value),
+                    '実績': round(j_sum / 0.3) if j_sum > 0 else 0,
+                    '情報提供料': round(j_sum)
+                })
             
             return {
                 'platform': 'ameba',
                 'file': file_path.name,
                 '実績': round(実績),
                 '情報提供料合計': round(情報提供料合計),
-                'details': matching_records
+                'details': details
             }
             
         except Exception as e:
@@ -127,8 +179,8 @@ class SalesAggregator:
                     情報提供料_amount += 情報提供料_sum
                     details.append({
                         'content_group': hoge,
-                        '実績': 実績_sum,
-                        '情報提供料': 情報提供料_sum
+                        '実績': round(実績_sum),
+                        '情報提供料': round(情報提供料_sum)
                     })
                 
                 # 「月額実績」シートの処理も追加（もしあれば）
@@ -143,8 +195,8 @@ class SalesAggregator:
                         情報提供料_amount += monthly_情報提供料
                         details.append({
                             'content_group': '月額実績',
-                            '実績': monthly_実績,
-                            '情報提供料': monthly_情報提供料
+                            '実績': round(monthly_実績),
+                            '情報提供料': round(monthly_情報提供料)
                         })
                     except:
                         pass
@@ -159,7 +211,7 @@ class SalesAggregator:
                     total_amount = df[amount_column].sum()
                     実績_amount = total_amount / 1.1
                     情報提供料_amount = 実績_amount * 0.7
-                    details = [{'content_group': '楽天明細合計', '実績': 実績_amount, '情報提供料': 情報提供料_amount}]
+                    details = [{'content_group': '楽天明細合計', '実績': round(実績_amount), '情報提供料': round(情報提供料_amount)}]
                 else:
                     # 数値列が見つからない場合は0
                     実績_amount = 0
@@ -181,6 +233,18 @@ class SalesAggregator:
     def process_au_file(self, file_path):
         """au占い（SalesSummary）ファイルを処理"""
         try:
+            # Excelファイルの場合、暗号化チェック
+            if file_path.suffix.lower() in ['.xlsx', '.xls']:
+                import subprocess
+                try:
+                    result = subprocess.run(['file', str(file_path)], capture_output=True, text=True, timeout=10)
+                    if result.stdout and ('encrypted' in result.stdout.lower() or 'cdfv2 encrypted' in result.stdout.lower()):
+                        print(f"au占いファイルスキップ: {file_path.name} - まだ暗号化されています")
+                        return None
+                except (subprocess.TimeoutExpired, FileNotFoundError, UnicodeDecodeError):
+                    # subprocessでエラーが発生した場合はそのまま続行
+                    pass
+            
             # ファイル拡張子に応じてデータを読み込み
             if file_path.suffix.lower() == '.csv':
                 # 複数のエンコーディングを試す
@@ -193,8 +257,66 @@ class SalesAggregator:
                 else:
                     print(f"au占いファイル処理エラー: {file_path.name} - エンコーディングが不明です")
                     return None
+            elif file_path.suffix.lower() in ['.xlsx', '.xls']:
+                # Excelファイルの処理
+                df = None
+                try:
+                    if file_path.suffix.lower() == '.xlsx':
+                        df = pd.read_excel(file_path, engine='openpyxl')
+                    else:
+                        # .xlsファイルの場合は複数のエンジンを試す
+                        engines_to_try = ['xlrd', 'openpyxl', 'calamine']
+                        for engine in engines_to_try:
+                            try:
+                                df = pd.read_excel(file_path, engine=engine)
+                                break
+                            except Exception as engine_error:
+                                continue
+                        
+                        if df is None:
+                            print(f"au占いファイル処理エラー: {file_path.name} - .xlsファイルの読み込みエラー")
+                            return None
+                except Exception as e:
+                    if "password" in str(e).lower() or "protected" in str(e).lower() or "zip file" in str(e).lower():
+                        # パスワード保護解除を試行
+                        try:
+                            import msoffcrypto
+                            import io
+                            
+                            common_passwords = ['', 'password', '123456', '000000', 'admin', 'user']
+                            
+                            for password in common_passwords:
+                                try:
+                                    with open(file_path, 'rb') as file:
+                                        office_file = msoffcrypto.OfficeFile(file)
+                                        office_file.load_key(password=password if password else None)
+                                        
+                                        decrypted = io.BytesIO()
+                                        office_file.save(decrypted)
+                                        decrypted.seek(0)
+                                        
+                                        df = pd.read_excel(decrypted, engine='openpyxl')
+                                        print(f"au占いファイル: {file_path.name} - パスワード '{password}' で解除成功")
+                                        break
+                                except:
+                                    continue
+                            
+                            if df is None:
+                                print(f"au占いファイル処理エラー: {file_path.name} - パスワード解除失敗")
+                                return None
+                                
+                        except ImportError:
+                            print(f"au占いファイル処理エラー: {file_path.name} - msoffcrypto-toolが必要です")
+                            return None
+                        except Exception as decrypt_error:
+                            print(f"au占いファイル処理エラー: {file_path.name} - パスワード保護解除エラー: {str(decrypt_error)}")
+                            return None
+                    else:
+                        print(f"au占いファイル処理エラー: {file_path.name} - {str(e)}")
+                        return None
             else:
-                df = pd.read_excel(file_path)
+                print(f"au占いファイル処理エラー: {file_path.name} - サポートされていないファイル形式")
+                return None
             
             # B列の値が一致するもののG列の40%の値からK列の値を引いた値を算出
             b_column = df.iloc[:, 1]  # B列（番組ID）
@@ -221,13 +343,13 @@ class SalesAggregator:
                 g_sum = sum(values['g_values'])
                 k_sum = sum(values['k_values'])
                 実績_sum = g_sum  # G列の値
-                情報提供料_sum = (g_sum * 0.4) - k_sum  # G列の40%からK列を引いた値
+                情報提供料_sum = ((g_sum * 0.4) - k_sum) * 1.1  # G列の40%からK列を引いた値に1.1を乗算
                 実績_amount += 実績_sum
                 情報提供料_amount += 情報提供料_sum
                 details.append({
                     'content_group': b_value,
-                    '実績': 実績_sum,
-                    '情報提供料': 情報提供料_sum
+                    '実績': round(実績_sum),
+                    '情報提供料': round(情報提供料_sum)
                 })
             
             return {
@@ -247,30 +369,84 @@ class SalesAggregator:
         try:
             # ファイル拡張子に応じてデータを読み込み
             if file_path.suffix.lower() == '.csv':
-                # 複数のエンコーディングを試す
-                for encoding in ['utf-8', 'shift_jis', 'cp932']:
-                    try:
-                        df = pd.read_csv(file_path, encoding=encoding)
+                # 複数のエンコーディングと区切り文字を試す
+                encodings = ['shift_jis', 'cp932', 'utf-8', 'euc-jp']  # 日本語ファイルなのでshift_jisを最初に
+                separators = [',', ';', '\t', '|']
+                
+                df = None
+                for encoding in encodings:
+                    for sep in separators:
+                        try:
+                            # ヘッダー行をスキップして読み込み（説明文がある場合）
+                            df = pd.read_csv(file_path, encoding=encoding, sep=sep, 
+                                           skiprows=3, on_bad_lines='skip', engine='python')
+                            # データが正常に読み込めたかチェック（列数が5以上で、データ行がある）
+                            if df.shape[1] >= 5 and df.shape[0] > 0:
+                                # さらに数値列があるかチェック
+                                numeric_cols = df.select_dtypes(include=['number']).columns
+                                if len(numeric_cols) > 0:
+                                    break
+                        except (UnicodeDecodeError, pd.errors.ParserError) as e:
+                            continue
+                    if df is not None and df.shape[1] >= 5:
                         break
-                    except UnicodeDecodeError:
-                        continue
-                else:
-                    print(f"excite占いファイル処理エラー: {file_path.name} - エンコーディングが不明です")
+                
+                if df is None or df.shape[1] < 5:
+                    print(f"excite占いファイル処理エラー: {file_path.name} - CSVファイルの読み込みエラー")
+                    return None
+            elif file_path.suffix.lower() in ['.xlsx', '.xls']:
+                try:
+                    if file_path.suffix.lower() == '.xlsx':
+                        df = pd.read_excel(file_path, engine='openpyxl')
+                    else:
+                        try:
+                            df = pd.read_excel(file_path, engine='openpyxl')
+                        except:
+                            print(f"excite占いファイル処理エラー: {file_path.name} - .xlsファイルの読み込みエラー")
+                            return None
+                except Exception as e:
+                    print(f"excite占いファイル処理エラー: {file_path.name} - {str(e)}")
                     return None
             else:
-                df = pd.read_excel(file_path)
+                print(f"excite占いファイル処理エラー: {file_path.name} - サポートされていないファイル形式")
+                return None
             
             # B列の値が一致するもののF列の合計額を算出
+            b_column = df.iloc[:, 1]  # B列
             f_column = df.iloc[:, 5]  # F列
-            実績_amount = pd.to_numeric(f_column, errors='coerce').sum()
-            情報提供料_amount = 実績_amount * 0.6  # 60%
+            
+            # B列の値でグループ化してF列の合計を計算
+            b_groups = {}
+            for i, b_value in enumerate(b_column):
+                if pd.notna(b_value):
+                    if b_value not in b_groups:
+                        b_groups[b_value] = []
+                    f_value = pd.to_numeric(f_column.iloc[i], errors='coerce')
+                    if pd.notna(f_value):
+                        b_groups[b_value].append(f_value)
+            
+            実績_amount = 0
+            情報提供料_amount = 0
+            details = []
+            
+            for b_value, f_values in b_groups.items():
+                f_sum = sum(f_values)
+                実績_sum = f_sum
+                情報提供料_sum = f_sum * 0.6  # 60%
+                実績_amount += 実績_sum
+                情報提供料_amount += 情報提供料_sum
+                details.append({
+                    'content_group': str(b_value),
+                    '実績': round(実績_sum),
+                    '情報提供料': round(情報提供料_sum)
+                })
             
             return {
                 'platform': 'excite',
                 'file': file_path.name,
                 '実績': round(実績_amount),
                 '情報提供料合計': round(情報提供料_amount),
-                'details': [{'content_group': 'excite合計', '実績': 実績_amount, '情報提供料': 情報提供料_amount}]
+                'details': details
             }
             
         except Exception as e:
@@ -281,40 +457,93 @@ class SalesAggregator:
         """LINE占いファイルを処理"""
         try:
             # 「内訳」シートを読み込み
-            df = pd.read_excel(file_path, sheet_name='内訳')
+            try:
+                if file_path.suffix.lower() == '.xlsx':
+                    df = pd.read_excel(file_path, sheet_name='内訳', engine='openpyxl')
+                else:
+                    # .xlsファイルの場合は最初にxlrdを試す
+                    df = None
+                    try:
+                        # xlrdで試す（.xlsファイルの標準的なライブラリ）
+                        df = pd.read_excel(file_path, sheet_name='内訳', engine='xlrd')
+                    except Exception as xlrd_error:
+                        try:
+                            # openpyxlで試す
+                            df = pd.read_excel(file_path, sheet_name='内訳', engine='openpyxl')
+                        except Exception as openpyxl_error:
+                            try:
+                                # calamine（新しいライブラリ）で試す
+                                df = pd.read_excel(file_path, sheet_name='内訳', engine='calamine')
+                            except Exception as calamine_error:
+                                print(f"LINE占いファイル処理エラー: {file_path.name} - .xlsファイルの読み込みエラー (xlrd: {str(xlrd_error)[:50]}, openpyxl: {str(openpyxl_error)[:50]})")
+                                return None
+            except Exception as e:
+                print(f"LINE占いファイル処理エラー: {file_path.name} - {str(e)}")
+                return None
             
-            # F列の値が一致するもののJ列の合計額を1.1で除算
-            f_column = df.iloc[:, 5]  # F列
-            j_column = df.iloc[:, 9]  # J列
+            # 1行目で必要な列を特定
+            item_name_column_index = None
+            standard_amount_column_index = None
+            rs_amount_column_index = None
             
-            # F列の値でグループ化してJ列とN列の合計を計算
-            f_column = df.iloc[:, 5]  # F列
-            j_column = df.iloc[:, 9]  # J列
-            n_column = df.iloc[:, 13]  # N列
+            for i, col_name in enumerate(df.columns):
+                if pd.notna(col_name):
+                    col_name_str = str(col_name)
+                    if 'アイテム名' in col_name_str:
+                        item_name_column_index = i
+                    elif '基準額（税込）' in col_name_str:
+                        standard_amount_column_index = i
+                    elif 'RS金額' in col_name_str:
+                        rs_amount_column_index = i
             
-            f_groups = {}
-            for i, f_value in enumerate(f_column):
-                if pd.notna(f_value):
-                    if f_value not in f_groups:
-                        f_groups[f_value] = {'j_values': [], 'n_values': []}
-                    f_groups[f_value]['j_values'].append(j_column.iloc[i])
-                    f_groups[f_value]['n_values'].append(n_column.iloc[i])
+            if item_name_column_index is None:
+                print(f"LINE占いファイル処理エラー: {file_path.name} - 「アイテム名」列が見つかりません")
+                return None
+            
+            if standard_amount_column_index is None:
+                print(f"LINE占いファイル処理エラー: {file_path.name} - 「基準額（税込）」列が見つかりません")
+                return None
+            
+            if rs_amount_column_index is None:
+                print(f"LINE占いファイル処理エラー: {file_path.name} - 「RS金額」列が見つかりません")
+                return None
+            
+            item_name_column = df.iloc[:, item_name_column_index]  # アイテム名列
+            standard_amount_column = df.iloc[:, standard_amount_column_index]  # 基準額（税込）列
+            rs_amount_column = df.iloc[:, rs_amount_column_index]  # RS金額列
+            
+            # アイテム名でグループ化して基準額（税込）とRS金額の合計を計算
+            item_groups = {}
+            for i, item_name in enumerate(item_name_column):
+                if pd.notna(item_name):
+                    if item_name not in item_groups:
+                        item_groups[item_name] = {'standard_values': [], 'rs_values': []}
+                    
+                    standard_value = pd.to_numeric(standard_amount_column.iloc[i], errors='coerce')
+                    rs_value = pd.to_numeric(rs_amount_column.iloc[i], errors='coerce')
+                    
+                    if pd.notna(standard_value):
+                        item_groups[item_name]['standard_values'].append(standard_value)
+                    if pd.notna(rs_value):
+                        item_groups[item_name]['rs_values'].append(rs_value)
             
             実績_amount = 0
             情報提供料_amount = 0
             details = []
             
-            for f_value, values in f_groups.items():
-                j_sum = sum(pd.to_numeric(v, errors='coerce') for v in values['j_values'] if pd.notna(v))
-                n_sum = sum(pd.to_numeric(v, errors='coerce') for v in values['n_values'] if pd.notna(v))
-                実績_sum = j_sum / 1.1
-                情報提供料_sum = n_sum / 1.1
+            for item_name, values in item_groups.items():
+                standard_sum = sum(values['standard_values'])
+                rs_sum = sum(values['rs_values'])
+                
+                実績_sum = standard_sum / 1.1 if standard_sum > 0 else 0
+                情報提供料_sum = rs_sum / 1.1 if rs_sum > 0 else 0
+                
                 実績_amount += 実績_sum
                 情報提供料_amount += 情報提供料_sum
                 details.append({
-                    'content_group': f_value,
-                    '実績': 実績_sum,
-                    '情報提供料': 情報提供料_sum
+                    'content_group': str(item_name),
+                    '実績': round(実績_sum) if pd.notna(実績_sum) else 0,
+                    '情報提供料': round(情報提供料_sum) if pd.notna(情報提供料_sum) else 0
                 })
             
             return {
@@ -378,16 +607,21 @@ class SalesAggregator:
             for result in self.results:
                 # ファイル名から年月を抽出
                 yearmonth = '不明'
-                for folder in self.base_path.iterdir():
-                    if folder.is_dir() and re.match(r'\d{6}', folder.name):
-                        if any(result['file'] in str(f) for f in folder.iterdir()):
-                            yearmonth = folder.name
+                # 年フォルダ（4桁）内の月フォルダ（6桁）を検索
+                for year_folder in self.base_path.iterdir():
+                    if year_folder.is_dir() and re.match(r'\d{4}', year_folder.name):
+                        for month_folder in year_folder.iterdir():
+                            if month_folder.is_dir() and re.match(r'\d{6}', month_folder.name):
+                                if any(result['file'] in str(f.name) for f in month_folder.iterdir() if f.is_file()):
+                                    yearmonth = month_folder.name
+                                    break
+                        if yearmonth != '不明':
                             break
                 
                 # 各コンテンツの詳細を出力
                 for detail in result['details']:
-                    実績 = detail.get('実績', 0)
-                    情報提供料 = detail.get('情報提供料', 0)
+                    実績 = round(detail.get('実績', 0))
+                    情報提供料 = round(detail.get('情報提供料', 0))
                     writer.writerow([
                         result['platform'],
                         result['file'],
@@ -399,27 +633,12 @@ class SalesAggregator:
                     ])
                     total_実績 += 実績
                     total_情報提供料 += 情報提供料
-                
-                # プラットフォーム合計行も追加
-                writer.writerow([
-                    result['platform'] + '合計',
-                    result['file'],
-                    '合計',
-                    result['実績'],
-                    result['情報提供料合計'],
-                    yearmonth,
-                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                ])
         
         print(f"結果をCSVファイルに出力しました: {output_path}")
-        
-        # 合計金額の表示
-        print(f"全プラットフォーム合計実績: {total_実績:,.0f}円")
-        print(f"全プラットフォーム合計情報提供料: {total_情報提供料:,.0f}円")
 
 def main():
     # 設定
-    base_path = r"/mnt/c/Users/OW/Dropbox/disk2とローカルの同期/占い/占い売上/履歴/ISP支払通知書"
+    base_path = r"C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ISP支払通知書"
     output_path = "sales_distribution_summary.csv"
     
     # 処理実行
