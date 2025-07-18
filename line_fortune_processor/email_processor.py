@@ -90,9 +90,81 @@ class EmailProcessor:
             return []
             
         try:
-            # INBOXを選択
-            self.connection.select('INBOX')
+            # 全てのメールフォルダを検索
+            matching_emails = []
             
+            # 利用可能なフォルダを取得
+            typ, folders = self.connection.list()
+            folder_names = []
+            
+            if typ == 'OK':
+                for folder in folders:
+                    folder_str = folder.decode('utf-8')
+                    # フォルダ名を抽出
+                    folder_name = folder_str.split('"')[-2] if '"' in folder_str else folder_str.split()[-1]
+                    folder_names.append(folder_name)
+                    
+                self.logger.info(f"利用可能なフォルダ: {folder_names}")
+            
+            # 主要なフォルダを優先的に検索（LINEラベルを最優先）
+            priority_folders = [
+                'LINE/LINE&,wiB6lLV,wk-',  # LINE（自動）のエンコード済み名前
+                'LINE（自動）',
+                'LINE (自動)',
+                'LINE',
+                'INBOX', 
+                '[Gmail]/All Mail', 
+                '[Gmail]/すべてのメール', 
+                'All Mail'
+            ]
+            search_folders = []
+            
+            for folder in priority_folders:
+                if folder in folder_names:
+                    search_folders.append(folder)
+            
+            # 他のフォルダも追加（システムフォルダは除外）
+            for folder in folder_names:
+                if folder not in search_folders and not folder.startswith('[Gmail]/'):
+                    search_folders.append(folder)
+            
+            self.logger.info(f"検索対象フォルダ: {search_folders}")
+            
+            # 各フォルダで検索
+            for folder in search_folders[:5]:  # 最大5フォルダまで
+                try:
+                    self.logger.info(f"フォルダ '{folder}' を検索中...")
+                    self.connection.select(f'"{folder}"')
+                    
+                    folder_emails = self._search_in_current_folder(sender, recipient, subject_pattern, days_back)
+                    matching_emails.extend(folder_emails)
+                    
+                    if matching_emails:
+                        self.logger.info(f"フォルダ '{folder}' で {len(folder_emails)} 件見つかりました")
+                        break  # 見つかったら他のフォルダは検索しない
+                        
+                except Exception as e:
+                    self.logger.warning(f"フォルダ '{folder}' の検索中にエラーが発生しました: {e}")
+                    continue
+                    
+            # 重複を除去
+            unique_emails = []
+            seen_ids = set()
+            for email_info in matching_emails:
+                if email_info['id'] not in seen_ids:
+                    unique_emails.append(email_info)
+                    seen_ids.add(email_info['id'])
+            
+            self.logger.info(f"条件に一致するメールを {len(unique_emails)} 件見つけました")
+            return unique_emails
+            
+        except Exception as e:
+            self.logger.error(f"メール取得中にエラーが発生しました: {e}")
+            return []
+    
+    def _search_in_current_folder(self, sender: str, recipient: str, subject_pattern: str, days_back: int) -> List[Dict[str, Any]]:
+        """現在選択されているフォルダ内で検索"""
+        try:
             # 日付範囲を計算
             from datetime import datetime, timedelta
             end_date = datetime.now()
@@ -102,10 +174,44 @@ class EmailProcessor:
             start_date_str = start_date.strftime("%d-%b-%Y")
             end_date_str = end_date.strftime("%d-%b-%Y")
             
-            self.logger.info(f"検索範囲: {start_date_str} から {end_date_str} ({days_back}日間)")
-            
             # 日付範囲での検索
             date_query = f'SINCE "{start_date_str}"'
+            
+            matching_emails = []
+            
+            # LINE（自動）ラベル内のメールは全て対象なので、日付範囲のみで検索
+            try:
+                typ, data = self.connection.search(None, date_query)
+                
+                if typ == 'OK' and data[0]:
+                    email_ids = data[0].split()
+                    self.logger.debug(f"日付範囲で見つかったメールID数: {len(email_ids)}")
+                    
+                    # 全てのメールを処理対象とする（最新50件まで）
+                    for email_id in reversed(email_ids[-50:]):  # 最新50件のみ処理
+                        try:
+                            typ, msg_data = self.connection.fetch(email_id, '(RFC822)')
+                            if typ == 'OK':
+                                raw_email = msg_data[0][1]
+                                email_message = email.message_from_bytes(raw_email)
+                                
+                                email_info = self._extract_email_info(email_message)
+                                email_info['id'] = email_id.decode()
+                                
+                                matching_emails.append(email_info)
+                                
+                        except Exception as e:
+                            self.logger.warning(f"メールID {email_id} の処理中にエラーが発生しました: {e}")
+                            continue
+                            
+            except Exception as e:
+                self.logger.debug(f"日付範囲検索中にエラーが発生しました: {e}")
+                    
+            return matching_emails
+            
+        except Exception as e:
+            self.logger.error(f"フォルダ内検索中にエラーが発生しました: {e}")
+            return []
             
             matching_emails = []
             
