@@ -75,11 +75,12 @@ class LineFortuneProcessor:
                 return False
                 
             try:
-                # 条件に一致するメールを取得
+                # 条件に一致するメールを取得（7日間の範囲で検索）
                 emails = self.email_processor.fetch_matching_emails(
                     self.config.get('sender'),
                     self.config.get('recipient'),
-                    self.config.get('subject_pattern')
+                    self.config.get('subject_pattern'),
+                    self.config.get('search_days', 7)  # デフォルト7日間
                 )
                 
                 if not emails:
@@ -248,11 +249,12 @@ class LineFortuneProcessor:
                 return False
                 
             try:
-                # 条件に一致するメールを取得
+                # 条件に一致するメールを取得（7日間の範囲で検索）
                 emails = self.email_processor.fetch_matching_emails(
                     self.config.get('sender'),
                     self.config.get('recipient'),
-                    self.config.get('subject_pattern')
+                    self.config.get('subject_pattern'),
+                    self.config.get('search_days', 7)  # デフォルト7日間
                 )
                 
                 self.logger.info(f"処理対象のメールが {len(emails)} 件見つかりました")

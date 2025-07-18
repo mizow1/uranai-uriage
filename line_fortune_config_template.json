@@ -12,6 +12,7 @@
   "sender": "dev-line-fortune@linecorp.com",
   "recipient": "mizoguchi@outward.jp",
   "subject_pattern": "LineFortune Daily Report",
+  "search_days": 7,
   "retry_count": 3,
   "retry_delay": 5
 }
