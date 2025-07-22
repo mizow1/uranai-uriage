@@ -57,6 +57,17 @@ python line_fortune_email_processor.py --cleanup 30
 python line_fortune_email_processor.py --log-level DEBUG
 ```
 
+#### CSV統合機能（同フォルダ内のCSVファイルを統合）
+```bash
+python line_fortune_email_processor.py --merge-csvs
+```
+
+実行時の対話フロー：
+1. 同フォルダ内のCSVファイルを自動検出・表示（抽出日付も表示）
+2. 出力ファイル名を指定（デフォルト: `line-menu-YYYY-MM.csv`）
+3. 既存ファイルがある場合は上書き確認
+4. 最終実行確認
+
 #### メール検索日付範囲の指定（対話形式）
 ```bash
 # 基本的な実行（対話形式で日付範囲を指定）
@@ -201,6 +212,12 @@ aoki,十大主星が導く今日のあなたの運勢,0,0,0
 - **ユーザビリティ向上**: デフォルト値の提案とEnterキーでの確定機能
 - **処理確認機能**: 実行前に処理対象期間の確認プロンプト
 - **コマンドライン簡素化**: `--start-date`と`--end-date`オプションを廃止
+
+### v2.2の主な変更点
+- **CSV統合機能の追加**: `--merge-csvs`オプションで同フォルダ内の全CSVファイルを統合
+- **ファイル名からの日付抽出**: ファイル名から年月日を自動抽出し各行に日付列を追加
+- **対話形式の統合処理**: ファイル一覧表示、出力ファイル名カスタマイズ、上書き確認機能
+- **統合ファイル命名規則**: `line-menu-YYYY-MM.csv`形式での統合ファイル出力
 
 ### reiwaseimeiコンテンツの細分化機能
 - `contents_name.xlsx`のマッピングファイルを使用してreiwaseimeiコンテンツをさらに細分化
