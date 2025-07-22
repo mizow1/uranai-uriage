@@ -116,6 +116,9 @@ def merge_csv_files():
         
         all_rows = []
         
+        # ヘッダー行を準備
+        header_added = False
+        
         for csv_file in csv_files:
             try:
                 date_str = extract_date_from_filename(csv_file.name)
@@ -124,13 +127,21 @@ def merge_csv_files():
                     reader = csv.reader(f)
                     rows = list(reader)
                     
-                    # 各行に日付列を追加
-                    for row in rows:
+                    # ヘッダー行の処理
+                    if rows and not header_added:
+                        # 最初のファイルの場合、ヘッダー行に日付列を追加
+                        header_row = ["日付"] + rows[0]
+                        all_rows.append(header_row)
+                        header_added = True
+                    
+                    # データ行の処理（1行目のヘッダーを除外）
+                    data_rows = rows[1:] if rows else []
+                    for row in data_rows:
                         # 元の行の先頭に日付を追加
                         enhanced_row = [date_str] + row
                         all_rows.append(enhanced_row)
                         
-                print(f"  {csv_file.name}: {len(rows)}行を読み込み")
+                print(f"  {csv_file.name}: {len(data_rows)}行を読み込み（ヘッダー除外）")
                 
             except Exception as e:
                 print(f"  エラー: {csv_file.name}の読み込みに失敗 - {e}")
@@ -143,13 +154,11 @@ def merge_csv_files():
         # 統合ファイルを書き込み
         with open(output_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            # ヘッダー行を書き込み（日付列を追加）
-            if all_rows:
-                writer.writerows(all_rows)
+            writer.writerows(all_rows)
         
         print(f"\n統合完了: {output_filename}")
         print(f"  統合したファイル数: {len(csv_files)}個")
-        print(f"  総行数: {len(all_rows)}行")
+        print(f"  総行数: {len(all_rows)}行（ヘッダー1行 + データ{len(all_rows)-1}行）")
         
         return 0
         
