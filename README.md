@@ -30,6 +30,11 @@ python run_sales_aggregator.py
 python sales_aggregator.py
 ```
 
+LINEコンテンツ別売上（令和姓名用）
+```bash
+python line_fortune_email_processor.py --log-level INFO
+```
+
 ### 3. 設定
 
 実行時に以下の設定を求められます：

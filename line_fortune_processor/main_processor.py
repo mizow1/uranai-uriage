@@ -17,15 +17,23 @@ from .consolidation_processor import ConsolidationProcessor
 class LineFortuneProcessor:
     """LINE Fortune メール処理メインクラス"""
     
-    def __init__(self, config_file: str = None):
+    def __init__(self, config_file: str = None, start_date = None, end_date = None):
         """
         メイン処理を初期化
         
         Args:
             config_file: 設定ファイルのパス
+            start_date: メール検索開始日
+            end_date: メール検索終了日
         """
         # 設定の読み込み
         self.config = Config(config_file)
+        
+        # コマンドラインから指定された日付範囲があれば設定を上書き
+        if start_date is not None:
+            self.config.config['start_date'] = start_date
+        if end_date is not None:
+            self.config.config['end_date'] = end_date
         
         # ログの初期化
         self.logger = get_logger(
@@ -80,7 +88,9 @@ class LineFortuneProcessor:
                     self.config.get('sender'),
                     self.config.get('recipient'),
                     self.config.get('subject_pattern'),
-                    self.config.get('search_days', 7)  # デフォルト7日間
+                    start_date=self.config.get('start_date'),
+                    end_date=self.config.get('end_date'),
+                    days_back=self.config.get('search_days', 7)  # 日付が指定されていない場合のデフォルト
                 )
                 
                 if not emails:
@@ -208,16 +218,21 @@ class LineFortuneProcessor:
             original_filename = attachment['filename']
             file_content = attachment['content']
             
+            # lineサブディレクトリを作成
+            line_dir = target_dir / "line"
+            line_dir.mkdir(exist_ok=True)
+            
             # ファイル名をリネーム
             new_filename = self.file_processor.rename_file(original_filename, target_date)
             
             # 既存ファイルのバックアップを作成
-            if self.file_processor.file_exists(new_filename, target_dir):
-                self.logger.info(f"既存ファイルをバックアップします: {new_filename}")
-                self.file_processor.backup_file(new_filename, target_dir)
+            if self.file_processor.file_exists(new_filename, line_dir):
+                self.logger.info(f"既存ファイルを上書きします: {new_filename}")
+                # バックアップ処理を無効化し、上書き保存
+                # self.file_processor.backup_file(new_filename, line_dir)
             
-            # ファイルを保存
-            if self.file_processor.save_file(file_content, new_filename, target_dir):
+            # ファイルを保存（lineディレクトリに保存）
+            if self.file_processor.save_file(file_content, new_filename, line_dir):
                 self.logger.log_file_operation("保存", new_filename, True)
                 return True
             else:
@@ -254,7 +269,9 @@ class LineFortuneProcessor:
                     self.config.get('sender'),
                     self.config.get('recipient'),
                     self.config.get('subject_pattern'),
-                    self.config.get('search_days', 7)  # デフォルト7日間
+                    start_date=self.config.get('start_date'),
+                    end_date=self.config.get('end_date'),
+                    days_back=self.config.get('search_days', 7)  # 日付が指定されていない場合のデフォルト
                 )
                 
                 self.logger.info(f"処理対象のメールが {len(emails)} 件見つかりました")

@@ -37,6 +37,7 @@ class Config:
             "sender": "dev-line-fortune@linecorp.com",
             "recipient": "mizoguchi@outward.jp",
             "subject_pattern": "LineFortune Daily Report",
+            "search_days": 3,
             "retry_count": 3,
             "retry_delay": 5
         }
@@ -98,6 +99,7 @@ class Config:
             "sender": "dev-line-fortune@linecorp.com",
             "recipient": "mizoguchi@outward.jp",
             "subject_pattern": "LineFortune Daily Report",
+            "search_days": 3,
             "retry_count": 3,
             "retry_delay": 5
         }

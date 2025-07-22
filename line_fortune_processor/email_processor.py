@@ -72,7 +72,7 @@ class EmailProcessor:
             finally:
                 self.connection = None
     
-    def fetch_matching_emails(self, sender: str, recipient: str, subject_pattern: str, days_back: int = 30) -> List[Dict[str, Any]]:
+    def fetch_matching_emails(self, sender: str, recipient: str, subject_pattern: str, start_date: date = None, end_date: date = None, days_back: int = 30) -> List[Dict[str, Any]]:
         """
         条件に一致するメールを取得
         
@@ -80,7 +80,9 @@ class EmailProcessor:
             sender: 送信者のメールアドレス
             recipient: 受信者のメールアドレス
             subject_pattern: 件名のパターン
-            days_back: 検索対象の日数（デフォルト30日）
+            start_date: 検索開始日
+            end_date: 検索終了日
+            days_back: 検索対象の日数（start_date/end_dateが指定されていない場合のみ使用）
             
         Returns:
             List[Dict]: 一致するメールのリスト
@@ -136,7 +138,7 @@ class EmailProcessor:
                     self.logger.info(f"フォルダ '{folder}' を検索中...")
                     self.connection.select(f'"{folder}"')
                     
-                    folder_emails = self._search_in_current_folder(sender, recipient, subject_pattern, days_back)
+                    folder_emails = self._search_in_current_folder(sender, recipient, subject_pattern, days_back, start_date, end_date)
                     matching_emails.extend(folder_emails)
                     
                     if matching_emails:
@@ -162,20 +164,28 @@ class EmailProcessor:
             self.logger.error(f"メール取得中にエラーが発生しました: {e}")
             return []
     
-    def _search_in_current_folder(self, sender: str, recipient: str, subject_pattern: str, days_back: int) -> List[Dict[str, Any]]:
+    def _search_in_current_folder(self, sender: str, recipient: str, subject_pattern: str, days_back: int, start_date: date = None, end_date: date = None) -> List[Dict[str, Any]]:
         """現在選択されているフォルダ内で検索"""
         try:
             # 日付範囲を計算
             from datetime import datetime, timedelta
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=days_back)
+            
+            if start_date and end_date:
+                # 日付が指定されている場合
+                query_start_date = datetime.combine(start_date, datetime.min.time())
+                # end_dateの翌日をBEFOREに使用（BEFOREは指定日より前を検索するため）
+                query_end_date = datetime.combine(end_date, datetime.min.time()) + timedelta(days=1)
+            else:
+                # 日付が指定されていない場合はdays_backを使用
+                query_end_date = datetime.now()
+                query_start_date = query_end_date - timedelta(days=days_back)
             
             # IMAP日付フォーマット
-            start_date_str = start_date.strftime("%d-%b-%Y")
-            end_date_str = end_date.strftime("%d-%b-%Y")
+            start_date_str = query_start_date.strftime("%d-%b-%Y")
+            end_date_str = query_end_date.strftime("%d-%b-%Y")
             
-            # 日付範囲での検索
-            date_query = f'SINCE "{start_date_str}"'
+            # 日付範囲での検索（SINCE開始日 BEFORE終了日の翌日）
+            date_query = f'SINCE "{start_date_str}" BEFORE "{end_date_str}"'
             
             matching_emails = []
             
@@ -187,8 +197,8 @@ class EmailProcessor:
                     email_ids = data[0].split()
                     self.logger.debug(f"日付範囲で見つかったメールID数: {len(email_ids)}")
                     
-                    # 全てのメールを処理対象とする（最新50件まで）
-                    for email_id in reversed(email_ids[-50:]):  # 最新50件のみ処理
+                    # 全てのメールを処理対象とする（最新5000件まで）
+                    for email_id in reversed(email_ids[-5000:]):  # 最新5000件まで処理
                         try:
                             typ, msg_data = self.connection.fetch(email_id, '(RFC822)')
                             if typ == 'OK':
@@ -230,8 +240,8 @@ class EmailProcessor:
                         email_ids = data[0].split()
                         self.logger.info(f"送信者+日付で見つかったメールID数: {len(email_ids)}")
                         
-                        # 件名でフィルタリング（最新50件まで）
-                        for email_id in reversed(email_ids[-50:]):  # 最新50件のみ処理
+                        # 件名でフィルタリング（最新5000件まで）
+                        for email_id in reversed(email_ids[-5000:]):  # 最新5000件まで処理
                             try:
                                 typ, msg_data = self.connection.fetch(email_id, '(RFC822)')
                                 if typ == 'OK':
@@ -270,8 +280,8 @@ class EmailProcessor:
                         email_ids = data[0].split()
                         self.logger.info(f"件名+日付検索結果: {len(email_ids)} 件")
                         
-                        # 送信者でフィルタリング（最新50件まで）
-                        for email_id in reversed(email_ids[-50:]):  # 最新50件のみ処理
+                        # 送信者でフィルタリング（最新5000件まで）
+                        for email_id in reversed(email_ids[-5000:]):  # 最新5000件まで処理
                             try:
                                 typ, msg_data = self.connection.fetch(email_id, '(RFC822)')
                                 if typ == 'OK':

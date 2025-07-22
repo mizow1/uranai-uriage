@@ -6,7 +6,11 @@
       "Bash(del output.csv)",
       "Bash(file:*)",
       "Bash(head:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(python:*)",
+      "Bash(if exist \"line-menu-2025-07.csv\" del \"line-menu-2025-07.csv\")"
     ],
     "deny": []
   }

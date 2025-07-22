@@ -40,9 +40,13 @@ class ConsolidationProcessor:
             # CSVファイルを検索
             csv_files = list(directory.glob("*.csv"))
             
-            # 統合対象ファイルから出力ファイル自体を除外
+            # 統合対象ファイルから除外するファイルを定義
             output_path = directory / output_filename
-            csv_files = [f for f in csv_files if f != output_path]
+            exclude_patterns = ['line-menu-', 'line-contents-']
+            
+            # 出力ファイル自体と集計ファイルを除外
+            csv_files = [f for f in csv_files if f != output_path and 
+                        not any(pattern in f.name for pattern in exclude_patterns)]
             
             if not csv_files:
                 self.logger.warning(f"統合対象のCSVファイルが見つかりませんでした: {directory}")
@@ -136,14 +140,66 @@ class ConsolidationProcessor:
                 return None
                 
             # データを統合
-            consolidated_df = pd.concat(all_data, ignore_index=True)
+            raw_df = pd.concat(all_data, ignore_index=True)
             
-            self.logger.info(f"CSVファイルを統合しました: {len(csv_files)} 個のファイル, 合計 {len(consolidated_df)} 行")
+            # item_codeごとに集計処理を行う
+            consolidated_df = self._aggregate_by_item_code(raw_df)
+            
+            self.logger.info(f"CSVファイルを統合しました: {len(csv_files)} 個のファイル, 集計後 {len(consolidated_df)} 行")
             return consolidated_df
             
         except Exception as e:
             self.logger.error(f"CSV統合中にエラーが発生しました: {e}")
             return None
+    
+    def _aggregate_by_item_code(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        item_codeごとにデータを集計
+        
+        Args:
+            df: 統合された生データ
+            
+        Returns:
+            pd.DataFrame: item_codeごとに集計されたデータ
+        """
+        try:
+            if df.empty:
+                return df
+            
+            # 数値列と非数値列を分離
+            numeric_columns = df.select_dtypes(include=[float, int]).columns.tolist()
+            non_numeric_columns = df.select_dtypes(exclude=[float, int]).columns.tolist()
+            
+            # item_codeが存在しない場合はそのまま返す
+            if 'item_code' not in df.columns:
+                self.logger.warning("item_code列が見つかりません。集計をスキップします。")
+                return df
+            
+            # item_codeごとにグループ化
+            grouped = df.groupby('item_code')
+            
+            # 集計方法を定義
+            agg_dict = {}
+            
+            # 数値列は合計
+            for col in numeric_columns:
+                agg_dict[col] = 'sum'
+            
+            # 非数値列（item_code以外）は最初の値を取得
+            for col in non_numeric_columns:
+                if col != 'item_code':
+                    agg_dict[col] = 'first'
+            
+            # 集計実行
+            aggregated = grouped.agg(agg_dict).reset_index()
+            
+            self.logger.info(f"item_codeごとの集計完了: {len(df)} 行 → {len(aggregated)} 行")
+            
+            return aggregated
+            
+        except Exception as e:
+            self.logger.error(f"item_codeごとの集計中にエラーが発生しました: {e}")
+            return df
     
     def _save_consolidated_data(self, data: pd.DataFrame, output_path: Path) -> bool:
         """
