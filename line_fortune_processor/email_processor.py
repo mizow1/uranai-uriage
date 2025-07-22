@@ -81,9 +81,24 @@ class EmailProcessor:
         """メールサーバーから切断"""
         if self.connection:
             try:
-                self.connection.close()
-                self.connection.logout()
-                self.logger.info("メールサーバーから切断しました")
+                import concurrent.futures
+                import threading
+                
+                # タイムアウト付きで切断処理を実行
+                def disconnect_impl():
+                    self.connection.close()
+                    self.connection.logout()
+                
+                # ThreadPoolExecutorでタイムアウト処理
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(disconnect_impl)
+                    try:
+                        future.result(timeout=30)  # 30秒でタイムアウト
+                        self.logger.info("メールサーバーから切断しました")
+                    except concurrent.futures.TimeoutError:
+                        self.logger.warning("メールサーバー切断がタイムアウトしました")
+                        future.cancel()
+                    
             except Exception as e:
                 self.logger.warning(f"メールサーバーの切断中にエラーが発生しました: {e}")
             finally:
@@ -215,6 +230,7 @@ class EmailProcessor:
         
         if start_date and end_date:
             query_start_date = datetime.combine(start_date, datetime.min.time())
+            # 終了日を含めるため、翌日の00:00:00を設定
             query_end_date = datetime.combine(end_date, datetime.min.time()) + timedelta(days=1)
         else:
             query_end_date = datetime.now()
@@ -223,7 +239,12 @@ class EmailProcessor:
         start_date_str = query_start_date.strftime("%d-%b-%Y")
         end_date_str = query_end_date.strftime("%d-%b-%Y")
         
-        return f'SINCE "{start_date_str}" BEFORE "{end_date_str}"'
+        query = f'SINCE "{start_date_str}" BEFORE "{end_date_str}"'
+        self.logger.info(f"生成された日付クエリ: {query}")
+        self.logger.info(f"指定された日付範囲: {start_date} ～ {end_date}")
+        self.logger.info(f"クエリの実際の日付範囲: {query_start_date} ～ {query_end_date}")
+        
+        return query
     
     def _search_by_sender_and_date(self, sender: str, date_query: str, subject_pattern: str) -> List[Dict[str, Any]]:
         """送信者と日付で検索し、件名でフィルタリング"""
@@ -415,7 +436,7 @@ class EmailProcessor:
             if match:
                 year, month, day = match.groups()
                 extracted_date = date(int(year), int(month), int(day))
-                self.logger.info(f"件名から日付を抽出しました: {extracted_date}")
+                self.logger.info(f"件名から日付を抽出しました: {extracted_date} (件名: {subject[:50]}...)")
                 return extracted_date
             else:
                 self.logger.warning(f"件名から日付を抽出できませんでした: {subject}")

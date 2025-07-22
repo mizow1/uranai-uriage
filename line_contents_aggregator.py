@@ -71,15 +71,17 @@ class LineContentsAggregator:
                 if df is not None:
                     # 辞書形式でマッピングを保存
                     self.reiwa_mapping = dict(zip(df['item_code'], df['sub_group']))
-                    print(f"reiwaseimeiマッピングを読み込みました: {len(self.reiwa_mapping)}件")
+                    # print(f"reiwaseimeiマッピングを読み込みました: {len(self.reiwa_mapping)}件")
                 else:
-                    print(f"マッピングファイルの読み込みに失敗しました: {mapping_file_path}")
+                    # print(f"マッピングファイルの読み込みに失敗しました: {mapping_file_path}")
+                    pass
             else:
-                print(f"マッピングファイルが見つかりません: {mapping_file_path}")
+                # print(f"マッピングファイルが見つかりません: {mapping_file_path}")
+                pass
                 
         except Exception as e:
             self.errors.append(f"マッピングファイル読み込みエラー: {str(e)}")
-            print(f"マッピングファイル読み込みエラー: {str(e)}")
+            # print(f"マッピングファイル読み込みエラー: {str(e)}")
     
     def extract_content_group(self, item_code: str) -> str:
         """
@@ -196,7 +198,7 @@ class LineContentsAggregator:
             df.to_csv(output_path, index=False, encoding='utf-8-sig')
             
             self.processed_files.append(output_path)
-            print(f"保存完了: {output_path}")
+            # print(f"保存完了: {output_path}")
             return True
             
         except Exception as e:

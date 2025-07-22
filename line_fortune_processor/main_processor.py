@@ -122,11 +122,14 @@ class LineFortuneProcessor:
                         self.stats[AppConstants.STATS_EMAILS_ERROR] += 1
                         continue
                     
+                # 全メール処理完了後に統合処理を実行
+                self._consolidate_all_data()
+                
                 # 処理結果をログに記録
                 self._log_processing_results()
                 
-                # パフォーマンスサマリーをログ出力
-                self.performance_monitor.log_performance_summary()
+                # パフォーマンスサマリーをログ出力（一時的に無効化）
+                # self.performance_monitor.log_performance_summary()
                 
                 # セッション終了
                 success = self.stats[AppConstants.STATS_EMAILS_ERROR] == 0
@@ -170,6 +173,9 @@ class LineFortuneProcessor:
             self.logger.warning(f"日付の抽出に失敗しました: {subject}", email_id=email_id)
             self.stats[AppConstants.STATS_EMAILS_ERROR] += 1
             return False
+            
+        # 処理対象日付をログに記録
+        self.logger.info(f"処理対象日付: {target_date} (件名: {subject[:30]}...)", email_id=email_id)
         
         # 要件: CSV添付ファイルを抽出
         attachments = self.email_processor.extract_attachments(email_info, '.csv')
@@ -222,16 +228,7 @@ class LineFortuneProcessor:
             self.stats[AppConstants.STATS_EMAILS_ERROR] += 1
             return False
         
-        # 要件: 月次統合ファイルを生成
-        try:
-            line_dir = target_dir / "line"
-            if self.consolidation_processor.consolidate_monthly_data(line_dir):
-                self.stats[AppConstants.STATS_CONSOLIDATIONS_CREATED] += 1
-                self.logger.info(f"月次統合ファイルを作成しました", email_id=email_id)
-            else:
-                self.logger.warning(f"月次統合に失敗しました", email_id=email_id, directory=str(line_dir))
-        except Exception as e:
-            self.logger.warning(f"月次統合中にエラーが発生しました", email_id=email_id, exception=e)
+        # 月次統合は全メール処理完了後に実行
         
         # メールを既読にマーク
         try:
@@ -422,3 +419,34 @@ class LineFortuneProcessor:
         except Exception as e:
             self.logger.error("古いファイル削除中にエラーが発生しました", exception=e)
             return False
+    
+    def _consolidate_all_data(self):
+        """
+        全メール処理完了後にすべての月のデータを統合する
+        """
+        try:
+            base_path = Path(self.config.get('base_path', ''))
+            if not base_path.exists():
+                return
+            
+            # すべての月ディレクトリを処理
+            directories_processed = set()
+            
+            for year_dir in base_path.iterdir():
+                if year_dir.is_dir() and year_dir.name.isdigit():
+                    for month_dir in year_dir.iterdir():
+                        if month_dir.is_dir():
+                            line_dir = month_dir / "line"
+                            if line_dir.exists() and str(line_dir) not in directories_processed:
+                                # 月次統合処理を実行
+                                if self.consolidation_processor.consolidate_monthly_data(line_dir):
+                                    self.stats[AppConstants.STATS_CONSOLIDATIONS_CREATED] += 1
+                                    self.logger.info(f"月次統合ファイルを作成しました: {line_dir}")
+                                    directories_processed.add(str(line_dir))
+                                else:
+                                    self.logger.warning(f"月次統合に失敗しました: {line_dir}")
+            
+            self.logger.info(f"統合処理完了: {len(directories_processed)} ディレクトリ処理")
+            
+        except Exception as e:
+            self.logger.error("統合処理中にエラーが発生しました", exception=e)

@@ -47,7 +47,7 @@ def extract_date_from_filename(filename):
     return ""
 
 
-def aggregate_service_data():
+def aggregate_service_data(auto_mode=False):
     """同フォルダのCSVデータからservice_nameごとの合計を計算してline_contents_yyyy_mm.csvを作成する"""
     try:
         # 設定ファイルから保存場所を取得
@@ -89,11 +89,12 @@ def aggregate_service_data():
         for csv_file in csv_files:
             print(f"  - {csv_file.name}")
         
-        # 実行確認
-        confirm = input(f"\nこれらのファイルを統合してサービス別集計を実行しますか？ (y/N): ").strip().lower()
-        if confirm not in ['y', 'yes']:
-            print("処理を中止しました。")
-            return 0
+        # 実行確認（自動モード時はスキップ）
+        if not auto_mode:
+            confirm = input(f"\nこれらのファイルを統合してサービス別集計を実行しますか？ (y/N): ").strip().lower()
+            if confirm not in ['y', 'yes']:
+                print("処理を中止しました。")
+                return 0
         
         # マッピングファイルを読み込み
         mapping_file = Path(r"C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ISP支払通知書\line-reiwa-contents-menu.csv")
@@ -115,21 +116,24 @@ def aggregate_service_data():
         # デフォルトの出力ファイル名
         default_output_filename = f"line-contents-{year}-{month:02d}.csv"
         
-        # ファイル名の確認
-        print(f"\n出力ファイル名 (デフォルト: {default_output_filename})")
-        output_input = input("カスタムファイル名を入力 (Enterでデフォルト使用): ").strip()
-        
-        if output_input:
-            if not output_input.endswith('.csv'):
-                output_input += '.csv'
-            output_filename = output_input
+        # ファイル名の確認（自動モード時はデフォルトを使用）
+        if not auto_mode:
+            print(f"\n出力ファイル名 (デフォルト: {default_output_filename})")
+            output_input = input("カスタムファイル名を入力 (Enterでデフォルト使用): ").strip()
+            
+            if output_input:
+                if not output_input.endswith('.csv'):
+                    output_input += '.csv'
+                output_filename = output_input
+            else:
+                output_filename = default_output_filename
         else:
             output_filename = default_output_filename
             
         output_path = line_dir / output_filename
         
-        # 既存ファイルの確認
-        if output_path.exists():
+        # 既存ファイルの確認（自動モード時は自動上書き）
+        if output_path.exists() and not auto_mode:
             overwrite = input(f"\n'{output_filename}'は既に存在します。上書きしますか？ (y/N): ").strip().lower()
             if overwrite not in ['y', 'yes']:
                 print("処理を中止しました。")
@@ -348,8 +352,8 @@ def merge_csv_files():
             
         output_path = line_dir / output_filename
         
-        # 既存ファイルの確認
-        if output_path.exists():
+        # 既存ファイルの確認（自動モード時は自動上書き）
+        if output_path.exists() and not auto_mode:
             overwrite = input(f"\n'{output_filename}'は既に存在します。上書きしますか？ (y/N): ").strip().lower()
             if overwrite not in ['y', 'yes']:
                 print("処理を中止しました。")
@@ -578,37 +582,50 @@ def main():
         else:
             logger.info("メール処理を開始します")
             success = processor.process()
+            logger.info("メール処理が完了しました")
         
         # 結果の表示
+        logger.info("統計情報を取得中...")
         stats = processor.get_stats()
+        logger.info("統計情報を取得完了")
+        
         if not args.dry_run:
+            logger.info("処理結果を表示中...")
             print(f"処理結果:")
             print(f"  処理したメール数: {stats['emails_processed']}")
             print(f"  成功したメール数: {stats['emails_success']}")
             print(f"  エラーが発生したメール数: {stats['emails_error']}")
             print(f"  保存したファイル数: {stats['files_saved']}")
             print(f"  作成した統合ファイル数: {stats['consolidations_created']}")
+            logger.info("処理結果の表示完了")
         
-        # メール処理後のCSV統合実行
+        # メール処理後のCSV統合実行（既に内部で完了している場合はスキップ）
         if success and do_merge_csvs and not args.dry_run:
-            print("\n" + "="*50)
-            print("CSV統合処理を開始します")
-            print("="*50)
-            merge_result = merge_csv_files()
-            if merge_result != 0:
-                print("CSV統合処理でエラーが発生しました")
-                return 1
+            if stats.get('consolidations_created', 0) > 0:
+                print("\n" + "="*50)
+                print("CSV統合処理は既に完了しています")
+                print(f"作成した統合ファイル数: {stats['consolidations_created']}")
+                print("="*50)
+            else:
+                print("\n" + "="*50)
+                print("CSV統合処理を開始します")
+                print("="*50)
+                merge_result = merge_csv_files()
+                if merge_result != 0:
+                    print("CSV統合処理でエラーが発生しました")
+                    return 1
         
         # CSV統合後のサービス別集計実行
         if success and do_aggregate_services and not args.dry_run:
             print("\n" + "="*50)
             print("サービス別売上集計処理を開始します")
             print("="*50)
-            aggregate_result = aggregate_service_data()
+            aggregate_result = aggregate_service_data(auto_mode=True)
             if aggregate_result != 0:
                 print("サービス別集計処理でエラーが発生しました")
                 return 1
         
+        logger.info("処理完了、プログラム終了")
         return 0 if success else 1
         
     except KeyboardInterrupt:
@@ -620,8 +637,18 @@ def main():
         logger = get_logger()
         logger.error(f"予期しないエラーが発生しました: {e}", exception=e)
         return 1
+    
+    finally:
+        # 確実にプロセスを終了
+        logger = get_logger()
+        logger.info("プログラム終了処理を実行中...")
 
 
 if __name__ == "__main__":
-    exit_code = main()
-    sys.exit(exit_code)
+    try:
+        exit_code = main()
+        print(f"プログラムが正常終了しました (exit_code: {exit_code})")
+        sys.exit(exit_code)
+    except Exception as e:
+        print(f"プログラム実行中にエラーが発生しました: {e}")
+        sys.exit(1)

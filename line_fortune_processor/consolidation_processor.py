@@ -310,6 +310,16 @@ class ConsolidationProcessor:
                 year = int(dir_name[:4])
                 month = int(dir_name[4:])
                 return (year, month)
+            elif dir_name.lower() == "line":
+                # lineディレクトリの場合は、親ディレクトリから年月を抽出
+                parent_dir = directory.parent.name
+                if len(parent_dir) == 6 and parent_dir.isdigit():
+                    year = int(parent_dir[:4])
+                    month = int(parent_dir[4:])
+                    return (year, month)
+                else:
+                    self.logger.warning(f"lineディレクトリの親ディレクトリから年月を抽出できませんでした: {parent_dir}")
+                    return None
             else:
                 self.logger.warning(f"ディレクトリ名から年月を抽出できませんでした: {dir_name}")
                 return None
@@ -340,10 +350,61 @@ class ConsolidationProcessor:
             output_filename = self.generate_monthly_filename(year, month)
             
             # CSVファイルを統合
-            return self.consolidate_csv_files(directory, output_filename)
+            consolidation_success = self.consolidate_csv_files(directory, output_filename)
+            
+            # コンテンツファイルを生成
+            contents_success = self._generate_contents_file(directory, year, month)
+            
+            return consolidation_success and contents_success
             
         except Exception as e:
             self.logger.error(f"月次データ統合中にエラーが発生しました: {e}")
+            return False
+    
+    def _generate_contents_file(self, directory: Path, year: int, month: int) -> bool:
+        """
+        コンテンツファイル（line-contents-yyyy-mm.csv）を生成
+        """
+        try:
+            import sys
+            sys.path.append(str(directory.parent.parent.parent.parent))
+            from line_contents_aggregator import LineContentsAggregator
+            
+            # line-menuファイルパスを生成
+            menu_filename = f"line-menu-{year:04d}-{month:02d}.csv"
+            menu_file_path = directory / menu_filename
+            
+            if not menu_file_path.exists():
+                self.logger.warning(f"line-menuファイルが見つかりません: {menu_file_path}")
+                return True  # メニューファイルがない場合は正常として扱う
+            
+            # コンテンツアグリゲータを初期化
+            aggregator = LineContentsAggregator()
+            
+            # line-menuファイルを処理
+            df = aggregator.process_line_menu_file(str(menu_file_path))
+            
+            if df.empty:
+                self.logger.warning(f"処理可能なデータがありません: {menu_file_path}")
+                return True
+            
+            # コンテンツファイル名を生成
+            contents_filename = f"line-contents-{year:04d}-{month:02d}.csv"
+            output_path = directory / contents_filename
+            
+            # コンテンツファイルを保存
+            if aggregator.save_contents_file(df, str(output_path)):
+                self.logger.info(f"コンテンツファイルを作成しました: {contents_filename}")
+                return True
+            else:
+                self.logger.error(f"コンテンツファイルの保存に失敗しました: {contents_filename}")
+                return False
+                
+        except ImportError as e:
+            self.logger.warning(f"LineContentsAggregatorをインポートできませんでした: {e}")
+            return True  # インポートエラーは致命的ではない
+        except Exception as e:
+            self.logger.error(f"コンテンツファイル生成中にエラーが発生しました: {e}")
             return False
     
     def validate_csv_structure(self, csv_file: Path) -> bool:
