@@ -70,9 +70,9 @@ class FileProcessor:
             # ファイル名と拡張子を分離
             name, ext = os.path.splitext(original_filename)
             
-            # 日付を含む新しいファイル名を生成
+            # 日付を含む新しいファイル名を生成（yyyy-mm-dd_元ファイル名.csv形式）
             date_str = target_date.strftime("%Y-%m-%d")
-            new_filename = f"{name}_{date_str}{ext}"
+            new_filename = f"{date_str}_{name}{ext}"
             
             self.logger.info(f"ファイル名を変更しました: {original_filename} -> {new_filename}")
             return new_filename

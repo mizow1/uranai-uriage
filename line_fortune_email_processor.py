@@ -23,18 +23,25 @@ from line_fortune_processor.logger import get_logger
 
 def extract_date_from_filename(filename):
     """ファイル名から年月日を抽出する"""
-    # 2025-07-22のような日付パターンを検索
-    date_pattern = r'(\d{4})-(\d{1,2})-(\d{1,2})'
+    # 新しい形式: yyyy-mm-dd_元ファイル名.csv（先頭からの日付）
+    date_pattern = r'^(\d{4})-(\d{1,2})-(\d{1,2})_'
     match = re.search(date_pattern, filename)
     if match:
         year, month, day = match.groups()
         return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
     
-    # 20250722のような日付パターンを検索
-    date_pattern2 = r'(\d{4})(\d{2})(\d{2})'
+    # 旧形式: 元ファイル名_yyyy-mm-dd.csv（従来の検索）
+    date_pattern2 = r'(\d{4})-(\d{1,2})-(\d{1,2})'
     match2 = re.search(date_pattern2, filename)
     if match2:
         year, month, day = match2.groups()
+        return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+    
+    # 20250722のような日付パターンを検索
+    date_pattern3 = r'(\d{4})(\d{2})(\d{2})'
+    match3 = re.search(date_pattern3, filename)
+    if match3:
+        year, month, day = match3.groups()
         return f"{year}-{month}-{day}"
     
     return ""
@@ -59,15 +66,18 @@ def merge_csv_files():
             print(f"LINE CSVファイルの保存ディレクトリが見つかりません: {line_dir}")
             return 1
         
-        # コンテンツ名_yyyy-mm-dd.csvパターンのファイルのみを対象とする
+        # yyyy-mm-dd_コンテンツ名.csvパターンのファイルのみを対象とする
         csv_files = []
         for file in line_dir.glob("*.csv"):
             filename = file.name
             # output.csv や line-menu-*.csv などの統合ファイルは除外
+            # 新しいファイル名形式: yyyy-mm-dd_元ファイル名.csv
+            import re
+            date_pattern = r'^\d{4}-\d{2}-\d{2}_.*\.csv$'
             if (not filename.startswith("output") and 
                 not filename.startswith("line-menu-") and 
                 not filename.startswith("line-contents-") and
-                "_20" in filename and filename.count("-") >= 2):
+                re.match(date_pattern, filename)):
                 csv_files.append(file)
         
         if not csv_files:
