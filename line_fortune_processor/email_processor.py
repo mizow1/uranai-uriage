@@ -13,6 +13,10 @@ from email.mime.text import MIMEText
 from email.header import decode_header
 import time
 
+from .error_handler import retry_on_error, handle_errors, ErrorHandler, RetryableError, FatalError, ErrorType
+from .constants import MailConstants, ErrorConstants
+from .messages import MessageFormatter
+
 
 class EmailProcessor:
     """メール処理クラス"""
@@ -27,7 +31,9 @@ class EmailProcessor:
         self.config = config
         self.connection = None
         self.logger = logging.getLogger(__name__)
+        self.error_handler = ErrorHandler(self.logger)
         
+    @retry_on_error(max_retries=3, base_delay=2.0)
     def connect(self) -> bool:
         """
         メールサーバーに接続
@@ -35,30 +41,41 @@ class EmailProcessor:
         Returns:
             bool: 接続が成功した場合True
         """
+        server = self.config.get('server', 'imap.gmail.com')
+        port = self.config.get('port', 993)
+        use_ssl = self.config.get('use_ssl', True)
+        
+        username = self.config.get('username')
+        password = self.config.get('password')
+        
+        if not username or not password:
+            raise FatalError("メール認証情報が設定されていません", ErrorType.AUTHENTICATION)
+        
         try:
-            server = self.config.get('server', 'imap.gmail.com')
-            port = self.config.get('port', 993)
-            use_ssl = self.config.get('use_ssl', True)
-            
             if use_ssl:
                 self.connection = imaplib.IMAP4_SSL(server, port)
             else:
                 self.connection = imaplib.IMAP4(server, port)
             
-            username = self.config.get('username')
-            password = self.config.get('password')
-            
-            if not username or not password:
-                self.logger.error("メール認証情報が設定されていません")
-                return False
-                
             self.connection.login(username, password)
-            self.logger.info(f"メールサーバーに接続しました: {server}:{port}")
+            self.logger.info(MessageFormatter.get_email_message(
+                "connection_success", server=server, port=port
+            ))
             return True
             
+        except imaplib.IMAP4.error as e:
+            if 'authentication' in str(e).lower():
+                raise FatalError(f"認証に失敗しました: {e}", ErrorType.AUTHENTICATION, e)
+            else:
+                raise RetryableError(f"IMAPエラー: {e}", ErrorType.NETWORK, e)
+        except (ConnectionError, OSError) as e:
+            raise RetryableError(f"ネットワークエラー: {e}", ErrorType.NETWORK, e)
         except Exception as e:
-            self.logger.error(f"メールサーバーへの接続に失敗しました: {e}")
-            return False
+            error_type = self.error_handler.classify_error(e)
+            if self.error_handler.is_retryable(e, error_type):
+                raise RetryableError(f"メールサーバーへの接続に失敗: {e}", error_type, e)
+            else:
+                raise FatalError(f"メールサーバーへの接続に失敗: {e}", error_type, e)
     
     def disconnect(self):
         """メールサーバーから切断"""
@@ -72,6 +89,7 @@ class EmailProcessor:
             finally:
                 self.connection = None
     
+    @handle_errors("メール検索")
     def fetch_matching_emails(self, sender: str, recipient: str, subject_pattern: str, start_date: date = None, end_date: date = None, days_back: int = 30) -> List[Dict[str, Any]]:
         """
         条件に一致するメールを取得
@@ -88,8 +106,7 @@ class EmailProcessor:
             List[Dict]: 一致するメールのリスト
         """
         if not self.connection:
-            self.logger.error("メールサーバーに接続していません")
-            return []
+            raise FatalError("メールサーバーに接続していません", ErrorType.NETWORK)
             
         try:
             # 全てのメールフォルダを検索
@@ -167,210 +184,147 @@ class EmailProcessor:
     def _search_in_current_folder(self, sender: str, recipient: str, subject_pattern: str, days_back: int, start_date: date = None, end_date: date = None) -> List[Dict[str, Any]]:
         """現在選択されているフォルダ内で検索"""
         try:
-            # 日付範囲を計算
-            from datetime import datetime, timedelta
+            date_query = self._build_date_query(start_date, end_date, days_back)
             
-            if start_date and end_date:
-                # 日付が指定されている場合
-                query_start_date = datetime.combine(start_date, datetime.min.time())
-                # end_dateの翌日をBEFOREに使用（BEFOREは指定日より前を検索するため）
-                query_end_date = datetime.combine(end_date, datetime.min.time()) + timedelta(days=1)
-            else:
-                # 日付が指定されていない場合はdays_backを使用
-                query_end_date = datetime.now()
-                query_start_date = query_end_date - timedelta(days=days_back)
+            # 最適化された検索戦略を順次実行
+            search_strategies = [
+                lambda: self._search_by_sender_and_date(sender, date_query, subject_pattern),
+                lambda: self._search_by_subject_and_date(subject_pattern, date_query, sender),
+                lambda: self._search_by_date_only(date_query, sender, subject_pattern)
+            ]
             
-            # IMAP日付フォーマット
-            start_date_str = query_start_date.strftime("%d-%b-%Y")
-            end_date_str = query_end_date.strftime("%d-%b-%Y")
+            for strategy in search_strategies:
+                try:
+                    emails = strategy()
+                    if emails:
+                        return self._remove_duplicates(emails)
+                except Exception as e:
+                    self.logger.warning(f"検索戦略の実行中にエラーが発生しました: {e}")
+                    continue
             
-            # 日付範囲での検索（SINCE開始日 BEFORE終了日の翌日）
-            date_query = f'SINCE "{start_date_str}" BEFORE "{end_date_str}"'
-            
-            matching_emails = []
-            
-            # LINE（自動）ラベル内のメールは全て対象なので、日付範囲のみで検索
-            try:
-                typ, data = self.connection.search(None, date_query)
-                
-                if typ == 'OK' and data[0]:
-                    email_ids = data[0].split()
-                    self.logger.debug(f"日付範囲で見つかったメールID数: {len(email_ids)}")
-                    
-                    # 全てのメールを処理対象とする（最新5000件まで）
-                    for email_id in reversed(email_ids[-5000:]):  # 最新5000件まで処理
-                        try:
-                            typ, msg_data = self.connection.fetch(email_id, '(RFC822)')
-                            if typ == 'OK':
-                                raw_email = msg_data[0][1]
-                                email_message = email.message_from_bytes(raw_email)
-                                
-                                email_info = self._extract_email_info(email_message)
-                                email_info['id'] = email_id.decode()
-                                
-                                matching_emails.append(email_info)
-                                
-                        except Exception as e:
-                            self.logger.warning(f"メールID {email_id} の処理中にエラーが発生しました: {e}")
-                            continue
-                            
-            except Exception as e:
-                self.logger.debug(f"日付範囲検索中にエラーが発生しました: {e}")
-                    
-            return matching_emails
+            self.logger.info("条件に一致するメールが見つかりませんでした")
+            return []
             
         except Exception as e:
             self.logger.error(f"フォルダ内検索中にエラーが発生しました: {e}")
             return []
-            
-            matching_emails = []
-            
-            # 戦略1: 日付範囲 + 送信者で検索してから件名をフィルタリング
-            if sender:
-                self.logger.info(f"送信者での検索: {sender}")
-                try:
-                    # 送信者 + 日付範囲での検索
-                    search_query = f'FROM "{sender}" {date_query}'
-                    self.logger.info(f"検索クエリ: {search_query}")
-                    
-                    typ, data = self.connection.search(None, search_query)
-                    self.logger.info(f"送信者+日付検索結果: typ={typ}, data={data}")
-                    
-                    if typ == 'OK' and data[0]:
-                        email_ids = data[0].split()
-                        self.logger.info(f"送信者+日付で見つかったメールID数: {len(email_ids)}")
-                        
-                        # 件名でフィルタリング（最新5000件まで）
-                        for email_id in reversed(email_ids[-5000:]):  # 最新5000件まで処理
-                            try:
-                                typ, msg_data = self.connection.fetch(email_id, '(RFC822)')
-                                if typ == 'OK':
-                                    raw_email = msg_data[0][1]
-                                    email_message = email.message_from_bytes(raw_email)
-                                    
-                                    email_info = self._extract_email_info(email_message)
-                                    email_info['id'] = email_id.decode()
-                                    
-                                    # 件名のフィルタリング
-                                    subject = email_info.get('subject', '')
-                                    if not subject_pattern or subject_pattern.lower() in subject.lower():
-                                        matching_emails.append(email_info)
-                                        self.logger.info(f"一致するメール: {subject}")
-                                    else:
-                                        self.logger.debug(f"件名が一致しないメール: {subject}")
-                                        
-                            except Exception as e:
-                                self.logger.warning(f"メールID {email_id} の処理中にエラーが発生しました: {e}")
-                                continue
-                                
-                except Exception as e:
-                    self.logger.error(f"送信者検索中にエラーが発生しました: {e}")
-            
-            # 戦略2: 日付範囲 + 件名で検索してから送信者をフィルタリング
-            if not matching_emails and subject_pattern:
-                self.logger.info(f"件名での検索: {subject_pattern}")
-                try:
-                    # 件名 + 日付範囲での検索
-                    search_query = f'SUBJECT "{subject_pattern}" {date_query}'
-                    self.logger.info(f"検索クエリ: {search_query}")
-                    
-                    typ, data = self.connection.search(None, search_query)
-                    
-                    if typ == 'OK' and data[0]:
-                        email_ids = data[0].split()
-                        self.logger.info(f"件名+日付検索結果: {len(email_ids)} 件")
-                        
-                        # 送信者でフィルタリング（最新5000件まで）
-                        for email_id in reversed(email_ids[-5000:]):  # 最新5000件まで処理
-                            try:
-                                typ, msg_data = self.connection.fetch(email_id, '(RFC822)')
-                                if typ == 'OK':
-                                    raw_email = msg_data[0][1]
-                                    email_message = email.message_from_bytes(raw_email)
-                                    
-                                    email_info = self._extract_email_info(email_message)
-                                    email_info['id'] = email_id.decode()
-                                    
-                                    # 送信者のフィルタリング
-                                    if not sender or sender.lower() in email_info.get('sender', '').lower():
-                                        matching_emails.append(email_info)
-                                        self.logger.info(f"一致するメール: {email_info.get('subject', '')}")
-                                        
-                            except Exception as e:
-                                self.logger.warning(f"メールID {email_id} の処理中にエラーが発生しました: {e}")
-                                continue
-                                
-                except Exception as e:
-                    self.logger.error(f"件名検索中にエラーが発生しました: {e}")
-            
-            # 戦略3: 日付範囲のみで検索してから条件をフィルタリング
-            if not matching_emails:
-                self.logger.info(f"日付範囲での全メール検索: {date_query}")
-                try:
-                    typ, data = self.connection.search(None, date_query)
-                    if typ == 'OK' and data[0]:
-                        all_ids = data[0].split()
-                        recent_ids = all_ids[-100:] if len(all_ids) > 100 else all_ids
-                        
-                        self.logger.info(f"日付範囲内の最新 {len(recent_ids)} 件のメールから条件に一致するものを検索")
-                        
-                        for email_id in reversed(recent_ids):  # 新しい順
-                            try:
-                                typ, msg_data = self.connection.fetch(email_id, '(RFC822)')
-                                if typ == 'OK':
-                                    raw_email = msg_data[0][1]
-                                    email_message = email.message_from_bytes(raw_email)
-                                    
-                                    email_info = self._extract_email_info(email_message)
-                                    email_info['id'] = email_id.decode()
-                                    
-                                    # 条件チェック（デバッグ情報付き）
-                                    actual_sender = email_info.get('sender', '')
-                                    actual_subject = email_info.get('subject', '')
-                                    
-                                    sender_match = not sender or sender.lower() in actual_sender.lower()
-                                    subject_match = not subject_pattern or subject_pattern.lower() in actual_subject.lower()
-                                    
-                                    # デバッグ情報を出力
-                                    self.logger.debug(f"チェック中のメール:")
-                                    self.logger.debug(f"  実際の送信者: '{actual_sender}'")
-                                    self.logger.debug(f"  期待する送信者: '{sender}'")
-                                    self.logger.debug(f"  送信者マッチ: {sender_match}")
-                                    self.logger.debug(f"  実際の件名: '{actual_subject}'")
-                                    self.logger.debug(f"  期待する件名: '{subject_pattern}'")
-                                    self.logger.debug(f"  件名マッチ: {subject_match}")
-                                    
-                                    if sender_match and subject_match:
-                                        matching_emails.append(email_info)
-                                        self.logger.info(f"一致するメール発見: {actual_subject}")
-                                    else:
-                                        # マッチしない理由を記録
-                                        if not sender_match:
-                                            self.logger.debug(f"送信者が一致しません: '{actual_sender}' に '{sender}' が含まれていません")
-                                        if not subject_match:
-                                            self.logger.debug(f"件名が一致しません: '{actual_subject}' に '{subject_pattern}' が含まれていません")
-                                        
-                            except Exception as e:
-                                self.logger.warning(f"メールID {email_id} の処理中にエラーが発生しました: {e}")
-                                continue
-                                
-                except Exception as e:
-                    self.logger.error(f"日付範囲検索中にエラーが発生しました: {e}")
-            
-            # 重複を除去
-            unique_emails = []
-            seen_ids = set()
-            for email_info in matching_emails:
-                if email_info['id'] not in seen_ids:
-                    unique_emails.append(email_info)
-                    seen_ids.add(email_info['id'])
-            
-            self.logger.info(f"条件に一致するメールを {len(unique_emails)} 件見つけました")
-            return unique_emails
-            
-        except Exception as e:
-            self.logger.error(f"メール取得中にエラーが発生しました: {e}")
+    
+    def _build_date_query(self, start_date: date, end_date: date, days_back: int) -> str:
+        """日付検索クエリを構築"""
+        from datetime import datetime, timedelta
+        
+        if start_date and end_date:
+            query_start_date = datetime.combine(start_date, datetime.min.time())
+            query_end_date = datetime.combine(end_date, datetime.min.time()) + timedelta(days=1)
+        else:
+            query_end_date = datetime.now()
+            query_start_date = query_end_date - timedelta(days=days_back)
+        
+        start_date_str = query_start_date.strftime("%d-%b-%Y")
+        end_date_str = query_end_date.strftime("%d-%b-%Y")
+        
+        return f'SINCE "{start_date_str}" BEFORE "{end_date_str}"'
+    
+    def _search_by_sender_and_date(self, sender: str, date_query: str, subject_pattern: str) -> List[Dict[str, Any]]:
+        """送信者と日付で検索し、件名でフィルタリング"""
+        if not sender:
             return []
+        
+        self.logger.info(f"送信者と日付での検索: {sender}")
+        search_query = f'FROM "{sender}" {date_query}'
+        
+        typ, data = self.connection.search(None, search_query)
+        if typ != 'OK' or not data[0]:
+            return []
+        
+        email_ids = data[0].split()
+        self.logger.debug(f"送信者+日付で見つかったメールID数: {len(email_ids)}")
+        
+        return self._process_email_ids(email_ids, subject_pattern=subject_pattern)
+    
+    def _search_by_subject_and_date(self, subject_pattern: str, date_query: str, sender: str) -> List[Dict[str, Any]]:
+        """件名と日付で検索し、送信者でフィルタリング"""
+        if not subject_pattern:
+            return []
+        
+        self.logger.info(f"件名と日付での検索: {subject_pattern}")
+        search_query = f'SUBJECT "{subject_pattern}" {date_query}'
+        
+        typ, data = self.connection.search(None, search_query)
+        if typ != 'OK' or not data[0]:
+            return []
+        
+        email_ids = data[0].split()
+        self.logger.debug(f"件名+日付で見つかったメールID数: {len(email_ids)}")
+        
+        return self._process_email_ids(email_ids, sender_filter=sender)
+    
+    def _search_by_date_only(self, date_query: str, sender: str, subject_pattern: str) -> List[Dict[str, Any]]:
+        """日付のみで検索し、送信者と件名でフィルタリング"""
+        self.logger.info("日付範囲での全メール検索")
+        
+        typ, data = self.connection.search(None, date_query)
+        if typ != 'OK' or not data[0]:
+            return []
+        
+        all_ids = data[0].split()
+        recent_ids = all_ids[-100:] if len(all_ids) > 100 else all_ids
+        
+        self.logger.debug(f"日付範囲内の最新 {len(recent_ids)} 件のメールから条件に一致するものを検索")
+        return self._process_email_ids(recent_ids, sender_filter=sender, subject_pattern=subject_pattern)
+    
+    def _process_email_ids(self, email_ids: list, sender_filter: str = None, subject_pattern: str = None, limit: int = 5000) -> List[Dict[str, Any]]:
+        """メールIDリストを処理してメール情報を抽出"""
+        matching_emails = []
+        
+        for email_id in reversed(email_ids[-limit:]):
+            try:
+                typ, msg_data = self.connection.fetch(email_id, '(RFC822)')
+                if typ != 'OK':
+                    continue
+                
+                raw_email = msg_data[0][1]
+                email_message = email.message_from_bytes(raw_email)
+                
+                email_info = self._extract_email_info(email_message)
+                email_info['id'] = email_id.decode()
+                
+                if self._matches_filters(email_info, sender_filter, subject_pattern):
+                    matching_emails.append(email_info)
+                    
+            except Exception as e:
+                self.logger.warning(f"メールID {email_id} の処理中にエラーが発生しました: {e}")
+                continue
+        
+        return matching_emails
+    
+    def _matches_filters(self, email_info: Dict[str, Any], sender_filter: str = None, subject_pattern: str = None) -> bool:
+        """メールが指定されたフィルター条件に一致するかチェック"""
+        if sender_filter:
+            actual_sender = email_info.get('sender', '')
+            if sender_filter.lower() not in actual_sender.lower():
+                return False
+        
+        if subject_pattern:
+            actual_subject = email_info.get('subject', '')
+            if subject_pattern.lower() not in actual_subject.lower():
+                return False
+        
+        return True
+    
+    def _remove_duplicates(self, emails: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """重複したメールを除去"""
+        unique_emails = []
+        seen_ids = set()
+        
+        for email_info in emails:
+            email_id = email_info.get('id')
+            if email_id and email_id not in seen_ids:
+                unique_emails.append(email_info)
+                seen_ids.add(email_id)
+        
+        self.logger.info(f"条件に一致するメールを {len(unique_emails)} 件見つけました")
+        return unique_emails
     
     def _extract_email_info(self, email_message) -> Dict[str, Any]:
         """メールから情報を抽出"""
@@ -410,6 +364,7 @@ class EmailProcessor:
             'message': email_message
         }
     
+    @handle_errors("添付ファイル抽出")
     def extract_attachments(self, email_info: Dict[str, Any], file_type: str = ".csv") -> List[Dict[str, Any]]:
         """
         メールから添付ファイルを抽出
@@ -427,24 +382,19 @@ class EmailProcessor:
         if not email_message:
             return attachments
             
-        try:
-            for part in email_message.walk():
-                if part.get_content_disposition() == 'attachment':
-                    filename = part.get_filename()
-                    if filename and filename.lower().endswith(file_type.lower()):
-                        content = part.get_payload(decode=True)
-                        if content:
-                            attachments.append({
-                                'filename': filename,
-                                'content': content,
-                                'content_type': part.get_content_type()
-                            })
-                            
-            self.logger.info(f"添付ファイルを {len(attachments)} 件抽出しました")
-            
-        except Exception as e:
-            self.logger.error(f"添付ファイル抽出中にエラーが発生しました: {e}")
-            
+        for part in email_message.walk():
+            if part.get_content_disposition() == 'attachment':
+                filename = part.get_filename()
+                if filename and filename.lower().endswith(file_type.lower()):
+                    content = part.get_payload(decode=True)
+                    if content:
+                        attachments.append({
+                            'filename': filename,
+                            'content': content,
+                            'content_type': part.get_content_type()
+                        })
+                        
+        self.logger.info(f"添付ファイルを {len(attachments)} 件抽出しました")
         return attachments
     
     def extract_date_from_subject(self, subject: str) -> Optional[date]:

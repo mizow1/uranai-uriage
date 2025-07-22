@@ -12,6 +12,10 @@ from .logger import get_logger
 from .email_processor import EmailProcessor
 from .file_processor import FileProcessor
 from .consolidation_processor import ConsolidationProcessor
+from .error_handler import retry_on_error, handle_errors, ErrorHandler, RetryableError, FatalError, ErrorType
+from .constants import AppConstants, FileConstants
+from .messages import MessageFormatter
+from .performance_optimizer import ConcurrentProcessor, PerformanceMonitor, performance_monitor
 
 
 class LineFortuneProcessor:
@@ -31,15 +35,23 @@ class LineFortuneProcessor:
         
         # コマンドラインから指定された日付範囲があれば設定を上書き
         if start_date is not None:
-            self.config.config['start_date'] = start_date
+            self.config.set('start_date', start_date)
         if end_date is not None:
-            self.config.config['end_date'] = end_date
+            self.config.set('end_date', end_date)
         
         # ログの初期化
         self.logger = get_logger(
             self.config.get('log_file', 'line_fortune_processor.log'),
-            self.config.get('log_level', 'INFO')
+            self.config.get('log_level', 'INFO'),
+            self.config.get('use_json_logs', False)
         )
+        
+        # エラーハンドラー
+        self.error_handler = ErrorHandler(self.logger.get_logger())
+        
+        # パフォーマンス最適化
+        self.concurrent_processor = ConcurrentProcessor(max_workers=self.config.get('max_workers', 4))
+        self.performance_monitor = PerformanceMonitor()
         
         # 各モジュールの初期化
         self.email_processor = EmailProcessor(self.config.get('email', {}))
@@ -52,81 +64,92 @@ class LineFortuneProcessor:
         
         # 処理統計
         self.stats = {
-            'emails_processed': 0,
-            'emails_success': 0,
-            'emails_error': 0,
-            'files_saved': 0,
-            'consolidations_created': 0
+            AppConstants.STATS_EMAILS_PROCESSED: 0,
+            AppConstants.STATS_EMAILS_SUCCESS: 0,
+            AppConstants.STATS_EMAILS_ERROR: 0,
+            AppConstants.STATS_FILES_SAVED: 0,
+            AppConstants.STATS_CONSOLIDATIONS_CREATED: 0
         }
         
         self.session_id = None
         
+    @handle_errors("メイン処理")
     def process(self) -> bool:
         """
         メイン処理を実行
+        要件に基づく処理フロー:
+        1. メール監視と処理
+        2. ファイル名付けと整理 
+        3. 統合ファイル生成
+        4. エラー処理とログ記録
         
         Returns:
             bool: 処理が成功した場合True
         """
+        # セッション開始
+        self.session_id = self.logger.start_session()
+        
         try:
-            # セッション開始
-            self.session_id = self.logger.log_session_start()
-            
-            # 設定の検証
+            # 要件: 設定の検証
             if not self.config.validate():
-                self.logger.error("設定の検証に失敗しました")
-                return False
+                validation_errors = self.config.get_validation_errors()
+                for error in validation_errors:
+                    self.logger.error(f"設定エラー: {error}")
+                raise FatalError("設定の検証に失敗しました", ErrorType.UNKNOWN)
             
-            # メールサーバーに接続
+            # 要件: メールサーバーへの接続
             if not self.email_processor.connect():
-                self.logger.error("メールサーバーへの接続に失敗しました")
-                return False
+                raise FatalError("メールサーバーへの接続に失敗しました", ErrorType.NETWORK)
                 
             try:
-                # 条件に一致するメールを取得（7日間の範囲で検索）
-                emails = self.email_processor.fetch_matching_emails(
-                    self.config.get('sender'),
-                    self.config.get('recipient'),
-                    self.config.get('subject_pattern'),
-                    start_date=self.config.get('start_date'),
-                    end_date=self.config.get('end_date'),
-                    days_back=self.config.get('search_days', 7)  # 日付が指定されていない場合のデフォルト
-                )
+                # 要件: 条件に一致するメールを取得
+                emails = self._fetch_target_emails()
                 
                 if not emails:
                     self.logger.info("処理対象のメールが見つかりませんでした")
                     return True
                 
-                # 各メールを処理
+                self.logger.info(f"処理対象メール: {len(emails)} 件")
+                
+                # 要件: 各メールを処理し、エラーが発生しても他のメールの処理を継続
                 for email in emails:
-                    self.handle_email(email)
+                    try:
+                        self.handle_email(email)
+                    except Exception as e:
+                        self.logger.error(MessageFormatter.get_email_message(
+                            "email_processing_error", subject=email.get('subject', 'Unknown')
+                        ), exception=e)
+                        self.stats[AppConstants.STATS_EMAILS_ERROR] += 1
+                        continue
                     
                 # 処理結果をログに記録
-                self.logger.log_email_processing(
-                    self.stats['emails_processed'],
-                    self.stats['emails_success'],
-                    self.stats['emails_error']
-                )
+                self._log_processing_results()
+                
+                # パフォーマンスサマリーをログ出力
+                self.performance_monitor.log_performance_summary()
                 
                 # セッション終了
-                success = self.stats['emails_error'] == 0
-                self.logger.log_session_end(self.session_id, success)
+                success = self.stats[AppConstants.STATS_EMAILS_ERROR] == 0
+                self.logger.end_session(success)
                 
                 return success
                 
             finally:
                 # メールサーバーから切断
-                self.email_processor.disconnect()
+                try:
+                    self.email_processor.disconnect()
+                except Exception as e:
+                    self.logger.warning(f"メールサーバー切断中にエラー: {e}")
                 
         except Exception as e:
-            self.logger.error("メイン処理中にエラーが発生しました", exception=e)
-            if self.session_id:
-                self.logger.log_session_end(self.session_id, False)
-            return False
+            self.logger.end_session(False)
+            raise
     
+    @handle_errors("メール処理")
     def handle_email(self, email_info: Dict[str, Any]) -> bool:
         """
         単一のメールを処理
+        要件: エラーが発生しても他のメールの処理を継続
         
         Args:
             email_info: メール情報
@@ -134,73 +157,122 @@ class LineFortuneProcessor:
         Returns:
             bool: 処理が成功した場合True
         """
-        try:
-            self.stats['emails_processed'] += 1
-            
-            # 件名から日付を抽出
-            subject = email_info.get('subject', '')
-            target_date = self.email_processor.extract_date_from_subject(subject)
-            
-            if not target_date:
-                self.logger.warning(f"日付の抽出に失敗しました: {subject}")
-                self.stats['emails_error'] += 1
-                return False
-            
-            # 添付ファイルを抽出
-            attachments = self.email_processor.extract_attachments(email_info, '.csv')
-            
-            if not attachments:
-                self.logger.warning(f"CSV添付ファイルが見つかりませんでした: {subject}")
-                self.stats['emails_error'] += 1
-                return False
-            
-            # 対象ディレクトリを作成
-            target_dir = self.file_processor.create_directory_structure(target_date)
-            
-            if not target_dir:
-                self.logger.error(f"ディレクトリの作成に失敗しました: {target_date}")
-                self.stats['emails_error'] += 1
-                return False
-            
-            # 各添付ファイルを処理
-            saved_files = []
-            for attachment in attachments:
-                if self.process_attachment(attachment, target_date, target_dir):
-                    saved_files.append(attachment['filename'])
-                    self.stats['files_saved'] += 1
-            
-            if not saved_files:
-                self.logger.error(f"添付ファイルの保存に失敗しました: {subject}")
-                self.stats['emails_error'] += 1
-                return False
-            
-            # 月次統合を実行
-            if self.consolidation_processor.consolidate_monthly_data(target_dir):
-                self.stats['consolidations_created'] += 1
-                self.logger.log_consolidation_result(
-                    str(target_dir),
-                    len(saved_files),
-                    self.consolidation_processor.generate_monthly_filename(
-                        target_date.year, target_date.month
-                    ),
-                    True
-                )
-            else:
-                self.logger.warning(f"月次統合に失敗しました: {target_dir}")
-            
-            # メールを既読にマーク
-            email_id = email_info.get('id')
-            if email_id:
-                self.email_processor.mark_as_read(email_id)
-            
-            self.logger.info(f"メール処理が完了しました: {subject}")
-            self.stats['emails_success'] += 1
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"メール処理中にエラーが発生しました: {email_info.get('subject', 'Unknown')}", exception=e)
-            self.stats['emails_error'] += 1
+        self.stats[AppConstants.STATS_EMAILS_PROCESSED] += 1
+        email_id = email_info.get('id', 'unknown')
+        subject = email_info.get('subject', '')
+        
+        self.logger.info(f"メール処理開始: {subject}", email_id=email_id)
+        
+        # 要件: 件名から日付を抽出
+        target_date = self.email_processor.extract_date_from_subject(subject)
+        
+        if not target_date:
+            self.logger.warning(f"日付の抽出に失敗しました: {subject}", email_id=email_id)
+            self.stats[AppConstants.STATS_EMAILS_ERROR] += 1
             return False
+        
+        # 要件: CSV添付ファイルを抽出
+        attachments = self.email_processor.extract_attachments(email_info, '.csv')
+        
+        if not attachments:
+            self.logger.warning(f"CSV添付ファイルが見つかりませんでした", email_id=email_id, subject=subject)
+            self.stats[AppConstants.STATS_EMAILS_ERROR] += 1
+            return False
+        
+        self.logger.info(f"CSV添付ファイルを {len(attachments)} 件発見", email_id=email_id)
+        
+        # 要件: 対象ディレクトリを作成
+        try:
+            target_dir = self.file_processor.create_directory_structure(target_date)
+        except Exception as e:
+            self.logger.error(f"ディレクトリの作成に失敗しました: {target_date}", email_id=email_id, exception=e)
+            self.stats[AppConstants.STATS_EMAILS_ERROR] += 1
+            return False
+        
+        # 要件: 各添付ファイルを処理（並行処理で最適化）
+        try:
+            if len(attachments) > 1 and self.config.get('enable_parallel_processing', True):
+                # 複数ファイルの場合は並行処理
+                results = self.concurrent_processor.process_attachments_concurrently(
+                    attachments, self.process_attachment, target_date, target_dir
+                )
+                saved_files = [
+                    attachment['filename'] 
+                    for i, attachment in enumerate(attachments) 
+                    if i < len(results) and results[i]
+                ]
+                self.stats[AppConstants.STATS_FILES_SAVED] += len(saved_files)
+            else:
+                # 単一ファイルまたは順次処理
+                saved_files = []
+                for attachment in attachments:
+                    try:
+                        if self.process_attachment(attachment, target_date, target_dir):
+                            saved_files.append(attachment['filename'])
+                            self.stats[AppConstants.STATS_FILES_SAVED] += 1
+                    except Exception as e:
+                        self.logger.error(f"添付ファイル処理中にエラーが発生、次のファイルに進みます: {attachment.get('filename', 'Unknown')}", email_id=email_id, exception=e)
+                        continue
+        except Exception as e:
+            self.logger.error("添付ファイル並行処理中にエラーが発生しました", email_id=email_id, exception=e)
+            saved_files = []
+        
+        if not saved_files:
+            self.logger.error(f"添付ファイルの保存に失敗しました", email_id=email_id, subject=subject)
+            self.stats[AppConstants.STATS_EMAILS_ERROR] += 1
+            return False
+        
+        # 要件: 月次統合ファイルを生成
+        try:
+            line_dir = target_dir / "line"
+            if self.consolidation_processor.consolidate_monthly_data(line_dir):
+                self.stats[AppConstants.STATS_CONSOLIDATIONS_CREATED] += 1
+                self.logger.info(f"月次統合ファイルを作成しました", email_id=email_id)
+            else:
+                self.logger.warning(f"月次統合に失敗しました", email_id=email_id, directory=str(line_dir))
+        except Exception as e:
+            self.logger.warning(f"月次統合中にエラーが発生しました", email_id=email_id, exception=e)
+        
+        # メールを既読にマーク
+        try:
+            if email_id and email_id != 'unknown':
+                self.email_processor.mark_as_read(email_id)
+        except Exception as e:
+            self.logger.warning(f"メール既読マーク中にエラーが発生しました", email_id=email_id, exception=e)
+        
+        self.logger.info(f"メール処理が完了しました", email_id=email_id, files_saved=len(saved_files))
+        self.stats[AppConstants.STATS_EMAILS_SUCCESS] += 1
+        return True
+    
+    def _fetch_target_emails(self) -> List[Dict[str, Any]]:
+        """要件に基づいて対象メールを取得"""
+        return self.email_processor.fetch_matching_emails(
+            self.config.get('sender'),
+            self.config.get('recipient'),
+            self.config.get('subject_pattern'),
+            start_date=self.config.get('start_date'),
+            end_date=self.config.get('end_date'),
+            days_back=self.config.get('search_days', 7)
+        )
+    
+    def _log_processing_results(self):
+        """処理結果をログに記録"""
+        self.logger.info(
+            MessageFormatter.get_session_message(
+                "processing_results",
+                processed=self.stats[AppConstants.STATS_EMAILS_PROCESSED],
+                success=self.stats[AppConstants.STATS_EMAILS_SUCCESS],
+                error=self.stats[AppConstants.STATS_EMAILS_ERROR]
+            )
+        )
+        self.logger.info(
+            MessageFormatter.get_session_message(
+                "statistics",
+                emails=self.stats[AppConstants.STATS_EMAILS_PROCESSED],
+                files=self.stats[AppConstants.STATS_FILES_SAVED],
+                consolidations=self.stats[AppConstants.STATS_CONSOLIDATIONS_CREATED]
+            )
+        )
     
     def process_attachment(self, attachment: Dict[str, Any], target_date: date, target_dir: Path) -> bool:
         """

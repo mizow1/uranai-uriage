@@ -10,6 +10,10 @@ from datetime import date
 from pathlib import Path
 import time
 
+from .error_handler import retry_on_error, handle_errors, ErrorHandler, RetryableError, FatalError, ErrorType
+from .constants import FileConstants
+from .messages import MessageFormatter
+
 
 class FileProcessor:
     """ファイル処理クラス"""
@@ -27,37 +31,55 @@ class FileProcessor:
         self.retry_count = retry_count
         self.retry_delay = retry_delay
         self.logger = logging.getLogger(__name__)
+        self.error_handler = ErrorHandler(self.logger)
         
-    def create_directory_structure(self, target_date: date) -> Optional[Path]:
+    @retry_on_error(max_retries=3, base_delay=1.0)
+    def create_directory_structure(self, target_date: date) -> Path:
         """
         年/月のディレクトリ構造を作成
+        要件: base_path/yyyy/yyyymm/ 形式でディレクトリを作成
         
         Args:
             target_date: 対象日付
             
         Returns:
-            Path: 作成されたディレクトリパス、失敗した場合はNone
+            Path: 作成されたディレクトリパス
+            
+        Raises:
+            RetryableError: ディレクトリ作成に失敗した場合
         """
+        year_str = target_date.strftime("%Y")
+        month_str = target_date.strftime("%Y%m")
+        
+        # 要件に基づいたパス構築: base_path/yyyy/yyyymm/
+        target_dir = self.base_path / year_str / month_str
+        
         try:
-            year_str = target_date.strftime("%Y")
-            month_str = target_date.strftime("%Y%m")
-            
-            # パス構築: base_path/yyyy/yyyymm/
-            target_dir = self.base_path / year_str / month_str
-            
             # ディレクトリ作成（存在しない場合のみ）
             target_dir.mkdir(parents=True, exist_ok=True)
             
-            self.logger.info(f"ディレクトリ構造を作成しました: {target_dir}")
+            # 作成後のアクセス権限チェック
+            if not target_dir.exists() or not os.access(target_dir, os.W_OK):
+                raise RetryableError(f"ディレクトリの作成またはアクセスに失敗しました: {target_dir}", ErrorType.FILE_SYSTEM)
+            
+            self.logger.info(MessageFormatter.get_file_message(
+            "directory_created", path=target_dir
+        ))
             return target_dir
             
+        except PermissionError as e:
+            raise RetryableError(f"ディレクトリ作成の権限がありません: {target_dir}", ErrorType.FILE_SYSTEM, e)
+        except OSError as e:
+            raise RetryableError(f"ディレクトリ作成中にOSエラーが発生しました: {e}", ErrorType.FILE_SYSTEM, e)
         except Exception as e:
-            self.logger.error(f"ディレクトリ作成中にエラーが発生しました: {e}")
-            return None
+            error_type = self.error_handler.classify_error(e)
+            raise RetryableError(f"ディレクトリ作成中にエラーが発生しました: {e}", error_type, e)
     
+    @handle_errors("ファイル名変更")
     def rename_file(self, original_filename: str, target_date: date) -> str:
         """
         日付を含めるようにファイルをリネーム
+        要件: ファイル名にyyyy-mm-dd形式の日付を含める
         
         Args:
             original_filename: 元のファイル名
@@ -66,24 +88,23 @@ class FileProcessor:
         Returns:
             str: リネーム後のファイル名
         """
-        try:
-            # ファイル名と拡張子を分離
-            name, ext = os.path.splitext(original_filename)
-            
-            # 日付を含む新しいファイル名を生成（yyyy-mm-dd_元ファイル名.csv形式）
-            date_str = target_date.strftime("%Y-%m-%d")
-            new_filename = f"{date_str}_{name}{ext}"
-            
-            self.logger.info(f"ファイル名を変更しました: {original_filename} -> {new_filename}")
-            return new_filename
-            
-        except Exception as e:
-            self.logger.error(f"ファイル名変更中にエラーが発生しました: {e}")
-            return original_filename
+        # ファイル名と拡張子を分離
+        name, ext = os.path.splitext(original_filename)
+        
+        # 要件に基づく日付フォーマット：yyyy-mm-dd
+        date_str = target_date.strftime(FileConstants.DATE_FORMAT)
+        new_filename = f"{date_str}_{name}{ext}"
+        
+        self.logger.info(MessageFormatter.get_file_message(
+            "file_renamed", old_name=original_filename, new_name=new_filename
+        ))
+        return new_filename
     
+    @retry_on_error(max_retries=3, base_delay=2.0)
     def save_file(self, file_content: bytes, filename: str, directory: Path) -> bool:
         """
         指定されたディレクトリにファイルを保存
+        要件: 対象ディレクトリが存在しない場合は作成する
         
         Args:
             file_content: ファイルの内容
@@ -92,35 +113,44 @@ class FileProcessor:
             
         Returns:
             bool: 保存が成功した場合True
+            
+        Raises:
+            RetryableError: ファイル保存に失敗した場合
         """
         if not isinstance(directory, Path):
             directory = Path(directory)
             
         file_path = directory / filename
         
-        for attempt in range(self.retry_count):
-            try:
-                # ディレクトリの存在確認
-                if not directory.exists():
-                    directory.mkdir(parents=True, exist_ok=True)
-                
-                # ファイルを保存
-                with open(file_path, 'wb') as f:
-                    f.write(file_content)
-                
-                self.logger.info(f"ファイルを保存しました: {file_path}")
-                return True
-                
-            except Exception as e:
-                self.logger.warning(f"ファイル保存の試行 {attempt + 1} 回目が失敗しました: {e}")
-                
-                if attempt < self.retry_count - 1:
-                    self.logger.info(f"{self.retry_delay}秒後に再試行します")
-                    time.sleep(self.retry_delay)
-                else:
-                    self.logger.error(f"ファイル保存に失敗しました: {file_path}")
-                    
-        return False
+        try:
+            # 要件: ディレクトリが存在しない場合は作成
+            if not directory.exists():
+                directory.mkdir(parents=True, exist_ok=True)
+                self.logger.info(f"保存先ディレクトリを作成しました: {directory}")
+            
+            # ファイルを保存
+            with open(file_path, 'wb') as f:
+                f.write(file_content)
+            
+            # 保存後の検証
+            if not file_path.exists() or file_path.stat().st_size == 0:
+                raise RetryableError(f"ファイルの保存に失敗しました: {file_path}", ErrorType.FILE_SYSTEM)
+            
+            self.logger.info(MessageFormatter.get_file_message(
+                "file_saved", path=file_path, size=len(file_content)
+            ))
+            return True
+            
+        except PermissionError as e:
+            raise RetryableError(f"ファイル保存の権限がありません: {file_path}", ErrorType.FILE_SYSTEM, e)
+        except OSError as e:
+            if "No space left" in str(e):
+                raise FatalError(f"ディスク容量不足: {file_path}", ErrorType.FILE_SYSTEM, e)
+            else:
+                raise RetryableError(f"ファイル保存中にOSエラーが発生: {e}", ErrorType.FILE_SYSTEM, e)
+        except Exception as e:
+            error_type = self.error_handler.classify_error(e)
+            raise RetryableError(f"ファイル保存中にエラーが発生: {e}", error_type, e)
     
     def file_exists(self, filename: str, directory: Path) -> bool:
         """

@@ -10,6 +10,10 @@ import pandas as pd
 import os
 from datetime import date
 
+from .error_handler import retry_on_error, handle_errors, ErrorHandler, RetryableError, FatalError, ErrorType
+from .constants import ConsolidationConstants
+from .messages import MessageFormatter
+
 
 class ConsolidationProcessor:
     """CSV統合処理クラス"""
@@ -17,10 +21,13 @@ class ConsolidationProcessor:
     def __init__(self):
         """統合処理を初期化"""
         self.logger = logging.getLogger(__name__)
+        self.error_handler = ErrorHandler(self.logger)
         
+    @handle_errors("CSV統合処理")
     def consolidate_csv_files(self, directory: Path, output_filename: str) -> bool:
         """
         ディレクトリ内のすべてのCSVファイルを統合
+        要件: 月次フォルダ内のすべてのCSVファイルのデータを含む統合CSVファイルを生成
         
         Args:
             directory: 統合対象のディレクトリ
@@ -28,50 +35,49 @@ class ConsolidationProcessor:
             
         Returns:
             bool: 統合が成功した場合True
+            
+        Raises:
+            FatalError: ディレクトリが存在しない場合
         """
-        try:
-            if not isinstance(directory, Path):
-                directory = Path(directory)
-                
-            if not directory.exists():
-                self.logger.error(f"ディレクトリが存在しません: {directory}")
-                return False
-                
-            # CSVファイルを検索
-            csv_files = list(directory.glob("*.csv"))
+        if not isinstance(directory, Path):
+            directory = Path(directory)
             
-            # 統合対象ファイルから除外するファイルを定義
-            output_path = directory / output_filename
-            exclude_patterns = ['line-menu-', 'line-contents-']
+        if not directory.exists():
+            raise FatalError(f"統合対象ディレクトリが存在しません: {directory}", ErrorType.FILE_SYSTEM)
             
-            # 出力ファイル自体と集計ファイルを除外
-            csv_files = [f for f in csv_files if f != output_path and 
-                        not any(pattern in f.name for pattern in exclude_patterns)]
-            
-            if not csv_files:
-                self.logger.warning(f"統合対象のCSVファイルが見つかりませんでした: {directory}")
-                return False
-                
-            # ファイルを日付順にソート
-            csv_files = self._sort_csv_files_by_date(csv_files)
-            
-            # CSVファイルを統合
-            consolidated_data = self._merge_csv_files(csv_files)
-            
-            if consolidated_data is None:
-                self.logger.error("CSVファイルの統合に失敗しました")
-                return False
-                
-            # 統合データを保存
-            if self._save_consolidated_data(consolidated_data, output_path):
-                self.logger.info(f"統合ファイルを作成しました: {output_path}")
-                return True
-            else:
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"CSV統合中にエラーが発生しました: {e}")
+        # CSVファイルを検索
+        csv_files = list(directory.glob("*.csv"))
+        
+        # 要件: 統合対象ファイルから除外するファイルを定義
+        output_path = directory / output_filename
+        exclude_patterns = ConsolidationConstants.CONSOLIDATION_EXCLUDE_PATTERNS
+        
+        # 出力ファイル自体と集計ファイルを除外
+        csv_files = [f for f in csv_files if f != output_path and 
+                    not any(pattern in f.name for pattern in exclude_patterns)]
+        
+        if not csv_files:
+            self.logger.warning(f"統合対象のCSVファイルが見つかりませんでした: {directory}")
             return False
+            
+        self.logger.info(MessageFormatter.get_consolidation_message(
+            "csv_files_found", count=len(csv_files)
+        ))
+        for csv_file in csv_files:
+            self.logger.debug(f"  - {csv_file.name}")
+            
+        # ファイルを日付順にソート
+        csv_files = self._sort_csv_files_by_date(csv_files)
+        
+        # CSVファイルを統合
+        consolidated_data = self._merge_csv_files(csv_files)
+        
+        if consolidated_data is None or consolidated_data.empty:
+            self.logger.error("CSVファイルの統合に失敗しました")
+            return False
+            
+        # 要件: 統合ファイルがすでに存在する場合は更新版で上書き
+        return self._save_consolidated_data(consolidated_data, output_path, overwrite=True)
     
     def _sort_csv_files_by_date(self, csv_files: List[Path]) -> List[Path]:
         """
@@ -106,9 +112,11 @@ class ConsolidationProcessor:
             self.logger.warning(f"ファイルソート中にエラーが発生しました: {e}")
             return csv_files
     
+    @handle_errors("CSVファイルマージ")
     def _merge_csv_files(self, csv_files: List[Path]) -> Optional[pd.DataFrame]:
         """
         複数のCSVファイルをマージ
+        要件: ヘッダー行を統合ファイルの先頭に一度だけ維持
         
         Args:
             csv_files: マージ対象のCSVファイルのリスト
@@ -116,41 +124,55 @@ class ConsolidationProcessor:
         Returns:
             pd.DataFrame: マージされたデータ、失敗時はNone
         """
-        try:
-            all_data = []
-            
-            for csv_file in csv_files:
-                try:
-                    # CSVファイルを読み込み
-                    df = pd.read_csv(csv_file, encoding='utf-8')
-                    
-                    # データが空でない場合のみ追加
-                    if not df.empty:
-                        all_data.append(df)
-                        self.logger.debug(f"CSVファイルを読み込みました: {csv_file} ({len(df)} 行)")
-                    else:
-                        self.logger.warning(f"空のCSVファイルです: {csv_file}")
-                        
-                except Exception as e:
-                    self.logger.error(f"CSVファイル読み込み中にエラーが発生しました: {csv_file}, {e}")
-                    continue
-                    
-            if not all_data:
-                self.logger.error("読み込めるCSVファイルがありませんでした")
-                return None
+        all_data = []
+        headers_validated = False
+        expected_headers = None
+        
+        for csv_file in csv_files:
+            try:
+                # CSVファイルを読み込み
+                df = pd.read_csv(csv_file, encoding='utf-8')
                 
-            # データを統合
-            raw_df = pd.concat(all_data, ignore_index=True)
-            
-            # item_codeごとに集計処理を行う
-            consolidated_df = self._aggregate_by_item_code(raw_df)
-            
-            self.logger.info(f"CSVファイルを統合しました: {len(csv_files)} 個のファイル, 集計後 {len(consolidated_df)} 行")
-            return consolidated_df
-            
-        except Exception as e:
-            self.logger.error(f"CSV統合中にエラーが発生しました: {e}")
+                # 空のファイルをスキップ
+                if df.empty:
+                    self.logger.warning(f"空のCSVファイルです: {csv_file}")
+                    continue
+                
+                # 要件: ヘッダーの一貫性をチェック
+                if not headers_validated:
+                    expected_headers = df.columns.tolist()
+                    headers_validated = True
+                    self.logger.debug(f"期待ヘッダー: {expected_headers}")
+                elif df.columns.tolist() != expected_headers:
+                    self.logger.warning(f"ヘッダーが一致しません: {csv_file}")
+                    self.logger.warning(f"  期待: {expected_headers}")
+                    self.logger.warning(f"  実際: {df.columns.tolist()}")
+                    # ヘッダーが不一致でも処理を継続
+                
+                all_data.append(df)
+                self.logger.debug(f"CSVファイルを読み込みました: {csv_file} ({len(df)} 行)")
+                
+            except pd.errors.EmptyDataError:
+                self.logger.warning(f"CSVファイルが空です: {csv_file}")
+                continue
+            except pd.errors.ParserError as e:
+                self.logger.error(f"CSVファイルのパースエラー: {csv_file}, {e}")
+                continue
+            except Exception as e:
+                self.logger.error(f"CSVファイル読み込み中にエラーが発生しました: {csv_file}, {e}")
+                continue
+                
+        if not all_data:
+            self.logger.error("読み込めるCSVファイルがありませんでした")
             return None
+            
+        # 要件: データを統合（ヘッダーは一度だけ保持）
+        consolidated_df = pd.concat(all_data, ignore_index=True, sort=False)
+        
+        self.logger.info(MessageFormatter.get_consolidation_message(
+            "consolidation_complete", output_file="consolidated_data", files=len(csv_files)
+        ))
+        return consolidated_df
     
     def _aggregate_by_item_code(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -201,37 +223,66 @@ class ConsolidationProcessor:
             self.logger.error(f"item_codeごとの集計中にエラーが発生しました: {e}")
             return df
     
-    def _save_consolidated_data(self, data: pd.DataFrame, output_path: Path) -> bool:
+    @retry_on_error(max_retries=3, base_delay=1.0)
+    def _save_consolidated_data(self, data: pd.DataFrame, output_path: Path, overwrite: bool = True) -> bool:
         """
         統合データをファイルに保存
+        要件: 統合ファイルがすでに存在する場合は更新版で上書き
         
         Args:
             data: 統合されたデータ
             output_path: 保存先ファイルパス
+            overwrite: 上書きを許可するか
             
         Returns:
             bool: 保存が成功した場合True
+            
+        Raises:
+            RetryableError: ファイル保存に失敗した場合
         """
         try:
-            # 既存ファイルが存在する場合はバックアップを作成
+            # 要件: 既存ファイルが存在する場合は更新版で上書き
             if output_path.exists():
-                backup_path = output_path.with_suffix(f".backup{output_path.suffix}")
-                output_path.replace(backup_path)
-                self.logger.info(f"既存ファイルをバックアップしました: {backup_path}")
+                if overwrite:
+                    # バックアップを作成
+                    import time
+                    timestamp = time.strftime("%Y%m%d_%H%M%S")
+                    backup_path = output_path.with_suffix(f".backup_{timestamp}{output_path.suffix}")
+                    output_path.rename(backup_path)
+                    self.logger.info(f"既存ファイルをバックアップしました: {backup_path}")
+                else:
+                    raise FatalError(f"ファイルが既に存在し、上書きが禁止されています: {output_path}", ErrorType.FILE_SYSTEM)
+            
+            # ディレクトリの存在確認
+            output_path.parent.mkdir(parents=True, exist_ok=True)
             
             # データを保存
             data.to_csv(output_path, index=False, encoding='utf-8')
             
-            self.logger.info(f"統合データを保存しました: {output_path} ({len(data)} 行)")
+            # 保存後の検証
+            if not output_path.exists() or output_path.stat().st_size == 0:
+                raise RetryableError(f"統合ファイルの保存に失敗しました: {output_path}", ErrorType.FILE_SYSTEM)
+            
+            self.logger.info(MessageFormatter.get_consolidation_message(
+            "consolidation_complete", output_file=output_path.name, files=len(data)
+        ))
             return True
             
+        except PermissionError as e:
+            raise RetryableError(f"ファイル保存の権限がありません: {output_path}", ErrorType.FILE_SYSTEM, e)
+        except OSError as e:
+            if "No space left" in str(e):
+                raise FatalError(f"ディスク容量不足: {output_path}", ErrorType.FILE_SYSTEM, e)
+            else:
+                raise RetryableError(f"統合データ保存中にOSエラーが発生: {e}", ErrorType.FILE_SYSTEM, e)
         except Exception as e:
-            self.logger.error(f"統合データ保存中にエラーが発生しました: {e}")
-            return False
+            error_type = self.error_handler.classify_error(e)
+            raise RetryableError(f"統合データ保存中にエラーが発生: {e}", error_type, e)
     
     def generate_monthly_filename(self, year: int, month: int) -> str:
         """
         月次統合ファイル名を生成
+        要件: 「line-menu-yyyy-mm.csv」と名付ける
         
         Args:
             year: 年

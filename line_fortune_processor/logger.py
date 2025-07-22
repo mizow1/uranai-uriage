@@ -4,26 +4,60 @@
 
 import logging
 import logging.handlers
+import json
 import os
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
+import uuid
+
+
+class StructuredLogger:
+    """構造化ログフォーマッター"""
+    
+    def format(self, record: logging.LogRecord) -> str:
+        """ログレコードをJSON形式でフォーマット"""
+        log_entry = {
+            'timestamp': datetime.fromtimestamp(record.created).isoformat(),
+            'level': record.levelname,
+            'logger': record.name,
+            'function': record.funcName,
+            'line': record.lineno,
+            'message': record.getMessage()
+        }
+        
+        # 追加のコンテキスト情報を含める
+        if hasattr(record, 'session_id'):
+            log_entry['session_id'] = record.session_id
+        if hasattr(record, 'email_id'):
+            log_entry['email_id'] = record.email_id
+        if hasattr(record, 'file_path'):
+            log_entry['file_path'] = record.file_path
+        if hasattr(record, 'operation'):
+            log_entry['operation'] = record.operation
+        if hasattr(record, 'error_type'):
+            log_entry['error_type'] = record.error_type
+        
+        return json.dumps(log_entry, ensure_ascii=False)
 
 
 class Logger:
-    """カスタムログクラス"""
+    """拡張されたカスタムログクラス"""
     
-    def __init__(self, log_file: str = "line_fortune_processor.log", log_level: str = "INFO"):
+    def __init__(self, log_file: str = "line_fortune_processor.log", log_level: str = "INFO", use_json: bool = False):
         """
         ログ記録を初期化
         
         Args:
             log_file: ログファイル名
             log_level: ログレベル
+            use_json: JSON形式でログを出力するか
         """
         self.log_file = log_file
         self.log_level = log_level
+        self.use_json = use_json
         self.logger = None
+        self.session_id = None
         self._setup_logger()
     
     def _setup_logger(self):
@@ -60,13 +94,25 @@ class Logger:
             console_handler.setLevel(numeric_level)
             
             # フォーマッターの設定
-            formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
-                datefmt='%Y-%m-%d %H:%M:%S'
-            )
-            
-            file_handler.setFormatter(formatter)
-            console_handler.setFormatter(formatter)
+            if self.use_json:
+                # JSONフォーマッターをファイル用に使用
+                json_formatter = StructuredLogger()
+                file_handler.setFormatter(json_formatter)
+                
+                # コンソール用は読みやすいフォーマット
+                console_formatter = logging.Formatter(
+                    '%(asctime)s - %(levelname)s - %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S'
+                )
+                console_handler.setFormatter(console_formatter)
+            else:
+                # 総用フォーマッター
+                formatter = logging.Formatter(
+                    '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S'
+                )
+                file_handler.setFormatter(formatter)
+                console_handler.setFormatter(formatter)
             
             # ハンドラーをロガーに追加
             self.logger.addHandler(file_handler)
@@ -95,8 +141,12 @@ class Logger:
             **kwargs: 追加の情報
         """
         if self.logger:
-            extra_info = self._format_extra_info(kwargs)
-            self.logger.info(f"{message}{extra_info}")
+            extra = self._prepare_extra_data(kwargs)
+            if self.use_json:
+                self.logger.info(message, extra=extra)
+            else:
+                extra_info = self._format_extra_info(kwargs)
+                self.logger.info(f"{message}{extra_info}")
     
     def warning(self, message: str, **kwargs):
         """
@@ -176,18 +226,44 @@ class Logger:
             
         return f" [{', '.join(formatted_info)}]"
     
-    def log_session_start(self, session_id: str = None):
+    def _prepare_extra_data(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """追加データを準備"""
+        extra = kwargs.copy()
+        if self.session_id:
+            extra['session_id'] = self.session_id
+        return extra
+    
+    def start_session(self, session_id: str = None) -> str:
         """
-        セッション開始をログに記録
+        セッションを開始
         
         Args:
             session_id: セッションID
+            
+        Returns:
+            str: 生成されたセッションID
         """
         if not session_id:
-            session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            session_id = str(uuid.uuid4())[:8]
             
-        self.info(f"=== セッション開始 ===", session_id=session_id)
+        self.session_id = session_id
+        self.info("セッション開始", operation="session_start")
         return session_id
+    
+    def end_session(self, success: bool = True):
+        """
+        セッションを終了
+        
+        Args:
+            success: 成功/失敗フラグ
+        """
+        status = "success" if success else "failure"
+        self.info(f"セッション終了: {status}", operation="session_end", success=success)
+        self.session_id = None
+    
+    def log_session_start(self, session_id: str = None):
+        """後方互換性のためのメソッド"""
+        return self.start_session(session_id)
     
     def log_session_end(self, session_id: str = None, success: bool = True):
         """
@@ -268,18 +344,19 @@ class Logger:
 _logger_instance = None
 
 
-def get_logger(log_file: str = "line_fortune_processor.log", log_level: str = "INFO") -> Logger:
+def get_logger(log_file: str = "line_fortune_processor.log", log_level: str = "INFO", use_json: bool = False) -> Logger:
     """
     ログインスタンスを取得（シングルトン）
     
     Args:
         log_file: ログファイル名
         log_level: ログレベル
+        use_json: JSONフォーマットを使用するか
         
     Returns:
         Logger: ログインスタンス
     """
     global _logger_instance
     if _logger_instance is None:
-        _logger_instance = Logger(log_file, log_level)
+        _logger_instance = Logger(log_file, log_level, use_json)
     return _logger_instance

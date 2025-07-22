@@ -5,7 +5,9 @@
 import os
 import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
+from pathlib import Path
+from .error_handler import handle_errors, FatalError, ErrorType
 
 
 class Config:
@@ -19,7 +21,9 @@ class Config:
             config_file: 設定ファイルのパス
         """
         self.config_file = config_file or "line_fortune_config.json"
+        self.logger = logging.getLogger(__name__)
         self.config = self._load_config()
+        self._validation_errors = []
         
     def _load_config(self) -> Dict[str, Any]:
         """設定ファイルから設定を読み込み"""
@@ -63,6 +67,20 @@ class Config:
                 return default
         return value
     
+    def set(self, key: str, value: Any):
+        """設定値を設定"""
+        keys = key.split('.')
+        current = self.config
+        
+        # ネストした辞書を作成
+        for k in keys[:-1]:
+            if k not in current:
+                current[k] = {}
+            current = current[k]
+        
+        # 最後のキーに値を設定
+        current[keys[-1]] = value
+    
     def validate(self) -> bool:
         """設定の検証"""
         required_fields = [
@@ -74,12 +92,19 @@ class Config:
             "subject_pattern"
         ]
         
+        self._validation_errors = []
+        
         for field in required_fields:
             if not self.get(field):
-                logging.error(f"必須設定項目が不足しています: {field}")
-                return False
+                error_msg = f"必須設定項目が不足しています: {field}"
+                logging.error(error_msg)
+                self._validation_errors.append(error_msg)
                 
-        return True
+        return len(self._validation_errors) == 0
+    
+    def get_validation_errors(self) -> List[str]:
+        """検証エラーのリストを取得"""
+        return self._validation_errors.copy()
     
     def create_template(self, file_path: str = None):
         """設定ファイルテンプレートを作成"""

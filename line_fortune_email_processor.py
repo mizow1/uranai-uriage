@@ -47,6 +47,246 @@ def extract_date_from_filename(filename):
     return ""
 
 
+def aggregate_service_data():
+    """同フォルダのCSVデータからservice_nameごとの合計を計算してline_contents_yyyy_mm.csvを作成する"""
+    try:
+        # 設定ファイルから保存場所を取得
+        config = Config()
+        
+        # 現在の年月を取得
+        now = datetime.now()
+        year = now.year
+        month = now.month
+        
+        # LINE CSVファイルの保存ディレクトリを構築
+        base_path = Path(config.get('base_path'))
+        line_dir = base_path / str(year) / f"{year}{month:02d}" / "line"
+        
+        if not line_dir.exists():
+            print(f"LINE CSVファイルの保存ディレクトリが見つかりません: {line_dir}")
+            return 1
+        
+        # yyyy-mm-dd_サービス名.csvパターンのファイルのみを対象とする
+        csv_files = []
+        for file in line_dir.glob("*.csv"):
+            filename = file.name
+            # yyyy-mm-dd_サービス名.csvパターンのファイルのみを対象
+            import re
+            date_pattern = r'^\d{4}-\d{2}-\d{2}_.*\.csv$'
+            if re.match(date_pattern, filename):
+                csv_files.append(file)
+        
+        if not csv_files:
+            print("yyyy-mm-dd_サービス名.csv形式のファイルが見つかりませんでした。")
+            return 1
+        
+        print("\n" + "="*50)
+        print("サービス別売上集計機能")
+        print("="*50)
+        print(f"集計対象: yyyy-mm-dd_サービス名.csv形式のファイル ({len(csv_files)}個)")
+        
+        # ファイル一覧表示
+        for csv_file in csv_files:
+            print(f"  - {csv_file.name}")
+        
+        # 実行確認
+        confirm = input(f"\nこれらのファイルを統合してサービス別集計を実行しますか？ (y/N): ").strip().lower()
+        if confirm not in ['y', 'yes']:
+            print("処理を中止しました。")
+            return 0
+        
+        # マッピングファイルを読み込み
+        mapping_file = Path(r"C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ISP支払通知書\line-reiwa-contents-menu.csv")
+        content_mapping = {}
+        
+        if mapping_file.exists():
+            try:
+                with open(mapping_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        parts = line.strip().split(',')
+                        if len(parts) == 2:
+                            content_mapping[parts[0]] = parts[1]
+                print(f"マッピングファイルを読み込みました: {len(content_mapping)}件")
+            except Exception as e:
+                print(f"マッピングファイルの読み込みエラー: {e}")
+        else:
+            print("マッピングファイルが見つかりません。細分化機能は無効です。")
+        
+        # デフォルトの出力ファイル名
+        default_output_filename = f"line-contents-{year}-{month:02d}.csv"
+        
+        # ファイル名の確認
+        print(f"\n出力ファイル名 (デフォルト: {default_output_filename})")
+        output_input = input("カスタムファイル名を入力 (Enterでデフォルト使用): ").strip()
+        
+        if output_input:
+            if not output_input.endswith('.csv'):
+                output_input += '.csv'
+            output_filename = output_input
+        else:
+            output_filename = default_output_filename
+            
+        output_path = line_dir / output_filename
+        
+        # 既存ファイルの確認
+        if output_path.exists():
+            overwrite = input(f"\n'{output_filename}'は既に存在します。上書きしますか？ (y/N): ").strip().lower()
+            if overwrite not in ['y', 'yes']:
+                print("処理を中止しました。")
+                return 0
+        
+        # 集計処理を実行（全CSVファイルを統合）
+        service_totals = {}
+        total_rows = 0
+        processed_files = 0
+        
+        for csv_file in csv_files:
+            try:
+                print(f"\n処理中: {csv_file.name}")
+                
+                with open(csv_file, 'r', encoding='utf-8') as f:
+                    reader = csv.reader(f)
+                    header = next(reader, None)
+                    
+                    if not header:
+                        print(f"  スキップ: {csv_file.name} は空のファイルです")
+                        continue
+                    
+                    # ヘッダーの確認（最初のファイルのみ）
+                    if processed_files == 0:
+                        print(f"CSVヘッダー: {header}")
+                    
+                    # LINE CSVの場合の列を特定
+                    if 'service_name' in header:
+                        # LINE CSVファイルの場合
+                        try:
+                            service_name_idx = header.index('service_name')
+                            item_code_idx = header.index('item_code') if 'item_code' in header else -1
+                            ios_amount_idx = header.index('ios_paid_amount') if 'ios_paid_amount' in header else -1
+                            android_amount_idx = header.index('android_paid_amount') if 'android_paid_amount' in header else -1
+                            web_amount_idx = header.index('web_paid_amount') if 'web_paid_amount' in header else -1
+                        except ValueError as e:
+                            print(f"  スキップ: {csv_file.name} - LINE CSV形式の必要な列が見つかりません: {e}")
+                            continue
+                    else:
+                        # 従来のCSV形式の場合
+                        try:
+                            platform_idx = header.index('プラットフォーム') if 'プラットフォーム' in header else 0
+                            content_idx = header.index('コンテンツ') if 'コンテンツ' in header else 2
+                            amount_idx = header.index('実績') if '実績' in header else 3
+                            fee_idx = header.index('情報提供料合計') if '情報提供料合計' in header else 4
+                        except ValueError as e:
+                            print(f"  スキップ: {csv_file.name} - 必要な列が見つかりません: {e}")
+                            continue
+                    
+                    file_rows = 0
+                    for row in reader:
+                        if 'service_name' in header:
+                            # LINE CSVファイルの処理
+                            if len(row) <= service_name_idx:
+                                continue
+                            
+                            service_name = row[service_name_idx].strip()
+                            item_code = row[item_code_idx].strip() if item_code_idx >= 0 else ""
+                            
+                            # 金額の合計計算（iOS + Android + Web）
+                            try:
+                                ios_amount = int(row[ios_amount_idx]) if ios_amount_idx >= 0 and row[ios_amount_idx].strip() else 0
+                                android_amount = int(row[android_amount_idx]) if android_amount_idx >= 0 and row[android_amount_idx].strip() else 0  
+                                web_amount = int(row[web_amount_idx]) if web_amount_idx >= 0 and row[web_amount_idx].strip() else 0
+                                total_amount = ios_amount + android_amount + web_amount
+                            except ValueError:
+                                continue
+                            
+                            # サービス名の決定
+                            if service_name == '最強の姓名鑑定師軍団' and item_code:
+                                # マッピングファイルから細分化グループを検索
+                                group_name = content_mapping.get(item_code, 'その他')
+                                final_service_name = f"最強の姓名鑑定師軍団_{group_name}"
+                            else:
+                                final_service_name = service_name
+                            
+                            # 集計
+                            if final_service_name not in service_totals:
+                                service_totals[final_service_name] = {'amount': 0, 'fee': 0, 'count': 0}
+                            
+                            service_totals[final_service_name]['amount'] += total_amount
+                            service_totals[final_service_name]['fee'] += 0  # LINE CSVには情報提供料の概念がない
+                            service_totals[final_service_name]['count'] += 1
+                            total_rows += 1
+                            file_rows += 1
+                        
+                        else:
+                            # 従来のCSV形式の処理
+                            if len(row) <= max(platform_idx, content_idx, amount_idx, fee_idx):
+                                continue
+                            
+                            platform = row[platform_idx].strip()
+                            content_name = row[content_idx].strip()
+                            
+                            try:
+                                amount = int(row[amount_idx]) if row[amount_idx].strip() else 0
+                                fee = int(row[fee_idx]) if row[fee_idx].strip() else 0
+                            except ValueError:
+                                continue
+                            
+                            # サービス名の決定
+                            service_name = content_name if content_name else platform
+                            
+                            # 集計
+                            if service_name not in service_totals:
+                                service_totals[service_name] = {'amount': 0, 'fee': 0, 'count': 0}
+                            
+                            service_totals[service_name]['amount'] += amount
+                            service_totals[service_name]['fee'] += fee
+                            service_totals[service_name]['count'] += 1
+                            total_rows += 1
+                            file_rows += 1
+                    
+                    print(f"  完了: {file_rows}行を処理")
+                    processed_files += 1
+                    
+            except Exception as e:
+                print(f"  エラー: {csv_file.name}の読み込みに失敗 - {e}")
+                continue
+        
+        if not service_totals:
+            print("集計可能なデータが見つかりませんでした。")
+            return 1
+        
+        # 結果をCSVに書き込み
+        with open(output_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['サービス名', '売上合計', '情報提供料合計', 'レコード数'])
+            
+            # サービス名でソート
+            for service_name in sorted(service_totals.keys()):
+                data = service_totals[service_name]
+                writer.writerow([
+                    service_name,
+                    data['amount'],
+                    data['fee'],
+                    data['count']
+                ])
+        
+        print(f"\n集計完了: {output_filename}")
+        print(f"  処理したCSVファイル数: {processed_files}")
+        print(f"  処理したレコード数: {total_rows}")
+        print(f"  サービス数: {len(service_totals)}")
+        
+        # 集計結果のサマリー表示
+        print("\n=== 集計結果サマリー ===")
+        for service_name in sorted(service_totals.keys()):
+            data = service_totals[service_name]
+            print(f"  {service_name}: 売上={data['amount']:,}, 情報提供料={data['fee']:,}, 件数={data['count']}")
+        
+        return 0
+        
+    except Exception as e:
+        print(f"サービス別集計でエラーが発生しました: {e}")
+        return 1
+
+
 def merge_csv_files():
     """設定ファイルで指定された保存場所のCSVファイルを統合する"""
     try:
@@ -223,6 +463,12 @@ def main():
         help="同フォルダ内の全CSVファイルを統合してline-menu-yyyy-mmファイルを作成"
     )
     
+    parser.add_argument(
+        "--aggregate-services",
+        action="store_true",
+        help="同フォルダのyyyy-mm-dd_サービス名.csvファイルからservice_nameごとの合計を計算してline-contents-yyyy-mm.csvを作成"
+    )
+    
     
     args = parser.parse_args()
     
@@ -243,6 +489,10 @@ def main():
     # CSV統合機能
     if args.merge_csvs:
         return merge_csv_files()
+    
+    # サービス別集計機能
+    if args.aggregate_services:
+        return aggregate_service_data()
     
     def get_date_input(prompt, default_date=None):
         """対話形式で日付を取得"""
@@ -294,6 +544,10 @@ def main():
     # CSV統合確認
     merge_confirm = input("\nメール処理完了後、同フォルダ内のCSVファイルを統合しますか？ (y/N): ").strip().lower()
     do_merge_csvs = merge_confirm in ['y', 'yes']
+    
+    # サービス別集計確認
+    aggregate_confirm = input("CSVファイル統合後、サービス別売上集計を行いますか？ (y/N): ").strip().lower()
+    do_aggregate_services = aggregate_confirm in ['y', 'yes']
 
     try:
         # プロセッサーの初期化（日付範囲指定を渡す）
@@ -343,6 +597,16 @@ def main():
             merge_result = merge_csv_files()
             if merge_result != 0:
                 print("CSV統合処理でエラーが発生しました")
+                return 1
+        
+        # CSV統合後のサービス別集計実行
+        if success and do_aggregate_services and not args.dry_run:
+            print("\n" + "="*50)
+            print("サービス別売上集計処理を開始します")
+            print("="*50)
+            aggregate_result = aggregate_service_data()
+            if aggregate_result != 0:
+                print("サービス別集計処理でエラーが発生しました")
                 return 1
         
         return 0 if success else 1
