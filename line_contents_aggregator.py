@@ -156,7 +156,6 @@ class LineContentsAggregator:
                 results.append({
                     'content_group': row['content_group'],
                     'content_name': row['item_name'],
-                    'total_amount': total_cost,
                     'performance': performance,
                     'info_fee': info_fee
                 })

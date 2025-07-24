@@ -13,7 +13,7 @@ def main():
     
     # デフォルトのパス設定
     default_base_path = r"C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ISP支払通知書"
-    default_output_path = "output.csv"
+    default_output_path = "月別ISP別コンテンツ別売上.csv"
     
     # パス設定の確認
     base_path = input(f"データフォルダのパス (デフォルト: {default_base_path}): ").strip()
@@ -48,8 +48,9 @@ def main():
             print("- LINE占い: 'line'を含むファイル")
             return
         
-        # CSV出力
-        aggregator.export_to_csv(output_path)
+        # CSV出力（指定されたデータフォルダに出力）
+        full_output_path = Path(base_path) / output_path
+        aggregator.export_to_csv(str(full_output_path))
         
         print(f"\n=== 処理結果 ===")
         print(f"処理済みファイル数: {len(aggregator.results)}")
@@ -69,7 +70,7 @@ def main():
         overall_total = sum(platform_totals.values())
         print(f"\n全体合計: {overall_total:,.0f}円")
         
-        print(f"\n結果は '{output_path}' に保存されました。")
+        print(f"\n結果は '{full_output_path}' に保存されました。")
         
     except Exception as e:
         print(f"エラーが発生しました: {str(e)}")

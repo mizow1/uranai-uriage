@@ -50,6 +50,8 @@ def extract_date_from_filename(filename):
 def aggregate_service_data(auto_mode=False, target_year=None, target_month=None):
     """line-menu-yyyy-mmファイルからservice_nameごとの合計を計算してline_contents_yyyy_mm.csvを作成する"""
     try:
+        from line_contents_aggregator import LineContentsAggregator
+        
         # 設定ファイルから保存場所を取得
         config = Config()
         
@@ -90,23 +92,6 @@ def aggregate_service_data(auto_mode=False, target_year=None, target_month=None)
                 print("処理を中止しました。")
                 return 0
         
-        # マッピングファイルを読み込み
-        mapping_file = Path(r"C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ISP支払通知書\line-reiwa-contents-menu.csv")
-        content_mapping = {}
-        
-        if mapping_file.exists():
-            try:
-                with open(mapping_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        parts = line.strip().split(',')
-                        if len(parts) == 2:
-                            content_mapping[parts[0]] = parts[1]
-                print(f"マッピングファイルを読み込みました: {len(content_mapping)}件")
-            except Exception as e:
-                print(f"マッピングファイルの読み込みエラー: {e}")
-        else:
-            print("マッピングファイルが見つかりません。細分化機能は無効です。")
-        
         # デフォルトの出力ファイル名
         default_output_filename = f"line-contents-{year}-{month:02d}.csv"
         
@@ -133,121 +118,31 @@ def aggregate_service_data(auto_mode=False, target_year=None, target_month=None)
                 print("処理を中止しました。")
                 return 0
         
-        # 集計処理を実行（line-menu-yyyy-mmファイルから）
-        service_totals = {}
-        total_rows = 0
+        # LineContentsAggregatorを使用して処理
+        aggregator = LineContentsAggregator()
+        df = aggregator.process_line_menu_file(str(menu_file))
         
-        print(f"\n処理中: {menu_filename}")
-        
-        try:
-            with open(menu_file, 'r', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                header = next(reader, None)
-                
-                if not header:
-                    print(f"エラー: {menu_filename} は空のファイルです")
-                    return 1
-                
-                print(f"CSVヘッダー: {header}")
-                
-                # line-menu-yyyy-mmファイルの列を特定
-                try:
-                    service_name_idx = header.index('service_name')
-                    item_code_idx = header.index('item_code') if 'item_code' in header else -1
-                    ios_cost_idx = header.index('ios_paid_cost') if 'ios_paid_cost' in header else -1
-                    android_cost_idx = header.index('android_paid_cost') if 'android_paid_cost' in header else -1
-                except ValueError as e:
-                    print(f"エラー: 必要な列が見つかりません: {e}")
-                    return 1
-                
-                # 第一段階: service_nameごとにios_paid_costとandroid_paid_costを合計
-                service_cost_totals = {}
-                file_rows = 0
-                
-                for row in reader:
-                    if len(row) <= service_name_idx:
-                        continue
-                    
-                    service_name = row[service_name_idx].strip()
-                    item_code = row[item_code_idx].strip() if item_code_idx >= 0 else ""
-                    
-                    try:
-                        ios_cost = int(row[ios_cost_idx]) if ios_cost_idx >= 0 and row[ios_cost_idx].strip() else 0
-                        android_cost = int(row[android_cost_idx]) if android_cost_idx >= 0 and row[android_cost_idx].strip() else 0
-                    except ValueError:
-                        continue
-                    
-                    # サービス名の決定
-                    if service_name == '最強の姓名鑑定師軍団' and item_code:
-                        # マッピングファイルから細分化グループを検索
-                        group_name = content_mapping.get(item_code, 'その他')
-                        final_service_name = f"最強の姓名鑑定師軍団_{group_name}"
-                    else:
-                        final_service_name = service_name
-                    
-                    # コスト合計を蓄積
-                    if final_service_name not in service_cost_totals:
-                        service_cost_totals[final_service_name] = {'ios_cost': 0, 'android_cost': 0, 'count': 0}
-                    
-                    service_cost_totals[final_service_name]['ios_cost'] += ios_cost
-                    service_cost_totals[final_service_name]['android_cost'] += android_cost
-                    service_cost_totals[final_service_name]['count'] += 1
-                    total_rows += 1
-                    file_rows += 1
-                
-                # 第二段階: service_nameごとの合計に対して計算式を適用
-                for final_service_name, cost_data in service_cost_totals.items():
-                    total_cost = cost_data['ios_cost'] + cost_data['android_cost']
-                    
-                    # 実績 = (ios_paid_cost合計 + android_paid_cost合計) * 1.528575 / 1.1
-                    amount = total_cost * 1.528575 / 1.1
-                    
-                    # 情報提供料 = 実績 * 0.366674  
-                    fee = amount * 0.366674
-                    
-                    service_totals[final_service_name] = {
-                        'amount': amount,
-                        'fee': fee, 
-                        'count': cost_data['count']
-                    }
-                
-                print(f"  完了: {file_rows}行を処理")
-        
-        except Exception as e:
-            print(f"エラー: {menu_filename}の読み込みに失敗 - {e}")
-            return 1
-        
-        if not service_totals:
+        if df.empty:
             print("集計可能なデータが見つかりませんでした。")
             return 1
         
-        # 結果をCSVに書き込み
-        with open(output_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(['サービス名', 'performance', 'info_fee', 'レコード数'])
+        # ファイルを保存
+        if aggregator.save_contents_file(df, str(output_path)):
+            print(f"\n集計完了: {output_filename}")
+            print(f"  処理したファイル: {menu_filename}")
+            print(f"  コンテンツ数: {len(df)}")
+            print(f"  総実績: {df['performance'].sum():,}円")
+            print(f"  総情報提供料: {df['info_fee'].sum():,}円")
             
-            # サービス名でソート
-            for service_name in sorted(service_totals.keys()):
-                data = service_totals[service_name]
-                writer.writerow([
-                    service_name,
-                    data['amount'],
-                    data['fee'],
-                    data['count']
-                ])
-        
-        print(f"\n集計完了: {output_filename}")
-        print(f"  処理したファイル: {menu_filename}")
-        print(f"  処理したレコード数: {total_rows}")
-        print(f"  サービス数: {len(service_totals)}")
-        
-        # 集計結果のサマリー表示
-        print("\n=== 集計結果サマリー ===")
-        for service_name in sorted(service_totals.keys()):
-            data = service_totals[service_name]
-            print(f"  {service_name}: 売上={data['amount']:,}, 情報提供料={data['fee']:,}, 件数={data['count']}")
-        
-        return 0
+            # 集計結果のサマリー表示
+            print("\n=== 集計結果サマリー ===")
+            for _, row in df.iterrows():
+                print(f"  {row['content_group']}: 実績={row['performance']:,}, 情報提供料={row['info_fee']:,}")
+            
+            return 0
+        else:
+            print("ファイル保存に失敗しました。")
+            return 1
         
     except Exception as e:
         print(f"サービス別集計でエラーが発生しました: {e}")
