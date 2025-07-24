@@ -12,6 +12,38 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.header import decode_header
 import time
+try:
+    from tqdm import tqdm
+except ImportError:
+    # tqdmが利用できない場合のダミークラス
+    class tqdm:
+        def __init__(self, iterable=None, total=None, desc=None, **kwargs):
+            self.iterable = iterable or []
+            self.total = total or 0
+            self.desc = desc
+            self.current = 0
+            if desc:
+                print(f"{desc}: 開始")
+        
+        def __iter__(self):
+            return iter(self.iterable)
+        
+        def __enter__(self):
+            return self
+        
+        def __exit__(self, *args):
+            if self.desc:
+                print(f"{self.desc}: 完了")
+        
+        def update(self, n=1):
+            self.current += n
+            if self.desc and self.total > 0:
+                progress = (self.current / self.total) * 100
+                print(f"{self.desc}: {self.current}/{self.total} ({progress:.1f}%)")
+        
+        def set_description(self, desc):
+            self.desc = desc
+            print(f"{desc}")
 
 from .error_handler import retry_on_error, handle_errors, ErrorHandler, RetryableError, FatalError, ErrorType
 from .constants import MailConstants, ErrorConstants
@@ -164,22 +196,27 @@ class EmailProcessor:
             
             self.logger.info(f"検索対象フォルダ: {search_folders}")
             
-            # 各フォルダで検索
-            for folder in search_folders[:5]:  # 最大5フォルダまで
-                try:
-                    self.logger.info(f"フォルダ '{folder}' を検索中...")
-                    self.connection.select(f'"{folder}"')
-                    
-                    folder_emails = self._search_in_current_folder(sender, recipient, subject_pattern, days_back, start_date, end_date)
-                    matching_emails.extend(folder_emails)
-                    
-                    if matching_emails:
-                        self.logger.info(f"フォルダ '{folder}' で {len(folder_emails)} 件見つかりました")
-                        break  # 見つかったら他のフォルダは検索しない
+            # 各フォルダで検索（進捗表示付き）
+            search_folders_limited = search_folders[:5]  # 最大5フォルダまで
+            with tqdm(total=len(search_folders_limited), desc="フォルダ検索進捗", unit="フォルダ") as folder_pbar:
+                for folder in search_folders_limited:
+                    try:
+                        folder_pbar.set_description(f"検索中: {folder}")
+                        self.logger.info(f"フォルダ '{folder}' を検索中...")
+                        self.connection.select(f'"{folder}"')
                         
-                except Exception as e:
-                    self.logger.warning(f"フォルダ '{folder}' の検索中にエラーが発生しました: {e}")
-                    continue
+                        folder_emails = self._search_in_current_folder(sender, recipient, subject_pattern, days_back, start_date, end_date)
+                        matching_emails.extend(folder_emails)
+                        
+                        if matching_emails:
+                            self.logger.info(f"フォルダ '{folder}' で {len(folder_emails)} 件見つかりました")
+                            folder_pbar.update(1)
+                            break  # 見つかったら他のフォルダは検索しない
+                            
+                    except Exception as e:
+                        self.logger.warning(f"フォルダ '{folder}' の検索中にエラーが発生しました: {e}")
+                    finally:
+                        folder_pbar.update(1)
                     
             # 重複を除去
             unique_emails = []
@@ -297,25 +334,33 @@ class EmailProcessor:
     def _process_email_ids(self, email_ids: list, sender_filter: str = None, subject_pattern: str = None, limit: int = 5000) -> List[Dict[str, Any]]:
         """メールIDリストを処理してメール情報を抽出"""
         matching_emails = []
+        email_ids_limited = email_ids[-limit:]
         
-        for email_id in reversed(email_ids[-limit:]):
-            try:
-                typ, msg_data = self.connection.fetch(email_id, '(RFC822)')
-                if typ != 'OK':
-                    continue
-                
-                raw_email = msg_data[0][1]
-                email_message = email.message_from_bytes(raw_email)
-                
-                email_info = self._extract_email_info(email_message)
-                email_info['id'] = email_id.decode()
-                
-                if self._matches_filters(email_info, sender_filter, subject_pattern):
-                    matching_emails.append(email_info)
+        # メール処理の進捗表示
+        with tqdm(total=len(email_ids_limited), desc="メール処理進捗", unit="件") as email_pbar:
+            for email_id in reversed(email_ids_limited):
+                try:
+                    email_pbar.set_description(f"処理中: メールID {email_id.decode() if isinstance(email_id, bytes) else email_id}")
                     
-            except Exception as e:
-                self.logger.warning(f"メールID {email_id} の処理中にエラーが発生しました: {e}")
-                continue
+                    typ, msg_data = self.connection.fetch(email_id, '(RFC822)')
+                    if typ != 'OK':
+                        email_pbar.update(1)
+                        continue
+                    
+                    raw_email = msg_data[0][1]
+                    email_message = email.message_from_bytes(raw_email)
+                    
+                    email_info = self._extract_email_info(email_message)
+                    email_info['id'] = email_id.decode() if isinstance(email_id, bytes) else email_id
+                    
+                    if self._matches_filters(email_info, sender_filter, subject_pattern):
+                        matching_emails.append(email_info)
+                        email_pbar.set_description(f"マッチしたメール: {len(matching_emails)}件")
+                        
+                except Exception as e:
+                    self.logger.warning(f"メールID {email_id} の処理中にエラーが発生しました: {e}")
+                finally:
+                    email_pbar.update(1)
         
         return matching_emails
     
