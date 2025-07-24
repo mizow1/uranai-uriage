@@ -47,16 +47,20 @@ def extract_date_from_filename(filename):
     return ""
 
 
-def aggregate_service_data(auto_mode=False):
+def aggregate_service_data(auto_mode=False, target_year=None, target_month=None):
     """line-menu-yyyy-mmファイルからservice_nameごとの合計を計算してline_contents_yyyy_mm.csvを作成する"""
     try:
         # 設定ファイルから保存場所を取得
         config = Config()
         
-        # 現在の年月を取得
-        now = datetime.now()
-        year = now.year
-        month = now.month
+        # 年月を取得（引数で指定されていればそれを使用、なければ現在の年月）
+        if target_year and target_month:
+            year = target_year
+            month = target_month
+        else:
+            now = datetime.now()
+            year = now.year
+            month = now.month
         
         # LINE CSVファイルの保存ディレクトリを構築
         base_path = Path(config.get('base_path'))
