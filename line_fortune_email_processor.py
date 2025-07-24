@@ -156,7 +156,10 @@ def aggregate_service_data(auto_mode=False):
                     print(f"エラー: 必要な列が見つかりません: {e}")
                     return 1
                 
+                # 第一段階: service_nameごとにios_paid_costとandroid_paid_costを合計
+                service_cost_totals = {}
                 file_rows = 0
+                
                 for row in reader:
                     if len(row) <= service_name_idx:
                         continue
@@ -164,17 +167,9 @@ def aggregate_service_data(auto_mode=False):
                     service_name = row[service_name_idx].strip()
                     item_code = row[item_code_idx].strip() if item_code_idx >= 0 else ""
                     
-                    # 実績と情報提供料の計算
                     try:
                         ios_cost = int(row[ios_cost_idx]) if ios_cost_idx >= 0 and row[ios_cost_idx].strip() else 0
                         android_cost = int(row[android_cost_idx]) if android_cost_idx >= 0 and row[android_cost_idx].strip() else 0
-                        
-                        # 実績 = (ios_paid_cost + android_paid_cost) * 1.528575 / 1.1
-                        total_cost = ios_cost + android_cost
-                        amount = total_cost * 1.528575 / 1.1
-                        
-                        # 情報提供料 = 実績 * 0.366674
-                        fee = amount * 0.366674
                     except ValueError:
                         continue
                     
@@ -186,15 +181,31 @@ def aggregate_service_data(auto_mode=False):
                     else:
                         final_service_name = service_name
                     
-                    # 集計
-                    if final_service_name not in service_totals:
-                        service_totals[final_service_name] = {'amount': 0, 'fee': 0, 'count': 0}
+                    # コスト合計を蓄積
+                    if final_service_name not in service_cost_totals:
+                        service_cost_totals[final_service_name] = {'ios_cost': 0, 'android_cost': 0, 'count': 0}
                     
-                    service_totals[final_service_name]['amount'] += amount
-                    service_totals[final_service_name]['fee'] += fee
-                    service_totals[final_service_name]['count'] += 1
+                    service_cost_totals[final_service_name]['ios_cost'] += ios_cost
+                    service_cost_totals[final_service_name]['android_cost'] += android_cost
+                    service_cost_totals[final_service_name]['count'] += 1
                     total_rows += 1
                     file_rows += 1
+                
+                # 第二段階: service_nameごとの合計に対して計算式を適用
+                for final_service_name, cost_data in service_cost_totals.items():
+                    total_cost = cost_data['ios_cost'] + cost_data['android_cost']
+                    
+                    # 実績 = (ios_paid_cost合計 + android_paid_cost合計) * 1.528575 / 1.1
+                    amount = total_cost * 1.528575 / 1.1
+                    
+                    # 情報提供料 = 実績 * 0.366674  
+                    fee = amount * 0.366674
+                    
+                    service_totals[final_service_name] = {
+                        'amount': amount,
+                        'fee': fee, 
+                        'count': cost_data['count']
+                    }
                 
                 print(f"  完了: {file_rows}行を処理")
         
