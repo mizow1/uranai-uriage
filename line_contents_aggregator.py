@@ -28,25 +28,23 @@ class LineContentsAggregator:
         
         self.load_reiwa_mapping(mapping_file_path)
     
-    def calculate_metrics(self, amount: float) -> tuple[int, int]:
+    def calculate_metrics(self, total_cost: float) -> tuple[int, int]:
         """
         売上金額から実績と情報提供料を計算
         
         Args:
-            amount: D列の値（ios_paid_amount）
+            total_cost: ios_paid_cost + android_paid_costの合計値
             
         Returns:
             tuple: (実績, 情報提供料)
         """
-        # D列の値 × 1.528575 の1円未満を四捨五入 × 0.366674 ÷ 1.1 = 実績
-        step1 = amount * 1.528575
-        step1_rounded = round(step1)
-        performance = round((step1_rounded * 0.366674) / 1.1)
+        # 実績 = (ios_paid_cost + android_paid_cost) * 1.528575 / 1.1
+        performance = total_cost * 1.528575 / 1.1
         
-        # 実績 × 0.366674 の1円未満を四捨五入 = 情報提供料
-        info_fee = round(performance * 0.366674)
+        # 情報提供料 = 実績 * 0.366674
+        info_fee = performance * 0.366674
         
-        return performance, info_fee
+        return int(performance), int(info_fee)
     
     def load_reiwa_mapping(self, mapping_file_path: str) -> None:
         """
@@ -131,7 +129,7 @@ class LineContentsAggregator:
                 raise ValueError(f"ファイルの読み込みに失敗しました: {file_path}")
             
             # 必要な列の確認
-            required_columns = ['item_name', 'item_code', 'ios_paid_amount']
+            required_columns = ['item_name', 'item_code', 'ios_paid_cost', 'android_paid_cost']
             for col in required_columns:
                 if col not in df.columns:
                     raise ValueError(f"必要な列が見つかりません: {col}")
@@ -140,22 +138,25 @@ class LineContentsAggregator:
             df['content_group'] = df['item_code'].apply(self.extract_content_group)
             
             # 数値列を数値型に変換（エラーは0に変換）
-            df['ios_paid_amount'] = pd.to_numeric(df['ios_paid_amount'], errors='coerce').fillna(0)
+            df['ios_paid_cost'] = pd.to_numeric(df['ios_paid_cost'], errors='coerce').fillna(0)
+            df['android_paid_cost'] = pd.to_numeric(df['android_paid_cost'], errors='coerce').fillna(0)
             
             # コンテンツグループごとの集計
             aggregated = df.groupby('content_group').agg({
                 'item_name': 'first',  # 代表的な商品名を取得
-                'ios_paid_amount': 'sum'  # 金額を合計
+                'ios_paid_cost': 'sum',  # iOS売上を合計
+                'android_paid_cost': 'sum'  # Android売上を合計
             }).reset_index()
             
             # 実績と情報提供料の計算
             results = []
             for _, row in aggregated.iterrows():
-                performance, info_fee = self.calculate_metrics(row['ios_paid_amount'])
+                total_cost = row['ios_paid_cost'] + row['android_paid_cost']
+                performance, info_fee = self.calculate_metrics(total_cost)
                 results.append({
                     'content_group': row['content_group'],
                     'content_name': row['item_name'],
-                    'total_amount': row['ios_paid_amount'],
+                    'total_amount': total_cost,
                     'performance': performance,
                     'info_fee': info_fee
                 })
