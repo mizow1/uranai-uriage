@@ -182,6 +182,33 @@ class LineFortuneProcessor:
         
         if not attachments:
             self.logger.warning(f"CSV添付ファイルが見つかりませんでした", email_id=email_id, subject=subject)
+            # デバッグ用：メール構造の詳細を一時的にINFOレベルで出力
+            self.logger.info("=== 添付ファイルが見つからないメールの詳細調査 ===")
+            email_message = email_info.get('message')
+            if email_message:
+                for i, part in enumerate(email_message.walk()):
+                    content_type = part.get_content_type()
+                    content_disposition = part.get_content_disposition()
+                    filename = part.get_filename()
+                    decoded_filename = self.email_processor._get_attachment_filename(part)
+                    is_multipart = part.is_multipart()
+                    
+                    self.logger.info(f"Part {i}: "
+                                   f"content_type={content_type}, "
+                                   f"disposition={content_disposition}, "
+                                   f"filename={filename}, "
+                                   f"decoded_filename={decoded_filename}, "
+                                   f"multipart={is_multipart}")
+                                   
+                    # CSVファイルかどうかをチェック
+                    if decoded_filename and decoded_filename.lower().endswith('.csv'):
+                        self.logger.info(f"  *** CSVファイルを検出: {decoded_filename} ***")
+                        
+                    # 全ヘッダーを出力
+                    if hasattr(part, 'items') and part.items():
+                        for header_name, header_value in part.items():
+                            self.logger.info(f"  Header {header_name}: {header_value}")
+            self.logger.info("=== 詳細調査終了 ===")
             self.stats[AppConstants.STATS_EMAILS_ERROR] += 1
             return False
         

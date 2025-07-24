@@ -447,21 +447,139 @@ class EmailProcessor:
         
         if not email_message:
             return attachments
+        
+        # デバッグ用：メール構造をログ出力
+        self._log_email_structure(email_message)
             
         for part in email_message.walk():
-            if part.get_content_disposition() == 'attachment':
-                filename = part.get_filename()
-                if filename and filename.lower().endswith(file_type.lower()):
-                    content = part.get_payload(decode=True)
-                    if content:
-                        attachments.append({
-                            'filename': filename,
-                            'content': content,
-                            'content_type': part.get_content_type()
-                        })
+            # より包括的な添付ファイル検出
+            content_disposition = part.get_content_disposition()
+            content_type = part.get_content_type()
+            filename = self._get_attachment_filename(part)
+            
+            # デバッグ情報を出力
+            self.logger.debug(f"Part: content_disposition={content_disposition}, content_type={content_type}, filename={filename}")
+            
+            # 添付ファイルの判定条件を拡張
+            is_attachment = (
+                content_disposition == 'attachment' or
+                content_disposition == 'inline' or
+                (filename and content_type in ['application/octet-stream', 'text/csv', 'application/csv', 'text/plain']) or
+                (filename and filename.lower().endswith(file_type.lower())) or
+                (content_type == 'text/csv' and filename) or
+                # さらに包括的な条件：ファイル名があり、MIMEタイプがテキスト系の場合
+                (filename and content_type.startswith('text/') and filename.lower().endswith(file_type.lower())) or
+                # Content-Dispositionヘッダーが存在し、filenameパラメータが含まれている場合
+                (content_disposition and 'filename=' in str(content_disposition).lower() and filename)
+            )
+            
+            if is_attachment and filename and filename.lower().endswith(file_type.lower()):
+                content = part.get_payload(decode=True)
+                if content:
+                    attachments.append({
+                        'filename': filename,
+                        'content': content,
+                        'content_type': content_type
+                    })
+                    self.logger.info(f"添付ファイルを検出: {filename} (type: {content_type}, disposition: {content_disposition})")
                         
         self.logger.info(f"添付ファイルを {len(attachments)} 件抽出しました")
         return attachments
+    
+    def _get_attachment_filename(self, part):
+        """添付ファイル名を取得（複数の方法を試行）"""
+        def decode_mime_filename(filename_str):
+            """MIMEエンコードされたファイル名をデコード"""
+            if not filename_str:
+                return None
+            try:
+                # すでにデコードされているかチェック
+                if not filename_str.startswith('=?'):
+                    return filename_str
+                
+                # MIMEヘッダーをデコード
+                decoded = decode_header(filename_str)
+                result = []
+                for text, charset in decoded:
+                    if isinstance(text, bytes):
+                        # 複数のエンコーディングを試す
+                        for encoding in [charset, 'utf-8', 'iso-2022-jp', 'shift_jis', 'euc-jp']:
+                            if encoding:
+                                try:
+                                    decoded_text = text.decode(encoding)
+                                    result.append(decoded_text)
+                                    break
+                                except (UnicodeDecodeError, LookupError):
+                                    continue
+                        else:
+                            # どのエンコーディングでも失敗した場合は、エラーを無視して強制デコード
+                            result.append(text.decode('utf-8', errors='ignore'))
+                    else:
+                        result.append(text)
+                return ''.join(result)
+            except Exception as e:
+                self.logger.warning(f"ファイル名デコードエラー: {e} (filename: {filename_str})")
+                return filename_str
+        
+        # 通常の方法でファイル名を取得
+        filename = part.get_filename()
+        if filename:
+            decoded_filename = decode_mime_filename(filename)
+            self.logger.debug(f"ファイル名デコード: '{filename}' -> '{decoded_filename}'")
+            return decoded_filename
+        
+        # Content-Dispositionヘッダーから直接取得
+        content_disposition = part.get('Content-Disposition', '')
+        if content_disposition:
+            import re
+            # filename="..." または filename*=... の形式を検索
+            filename_match = re.search(r'filename[*]?=([^;]+)', content_disposition, re.IGNORECASE)
+            if filename_match:
+                filename = filename_match.group(1).strip('"\'')
+                decoded_filename = decode_mime_filename(filename)
+                self.logger.debug(f"Content-Dispositionからファイル名デコード: '{filename}' -> '{decoded_filename}'")
+                return decoded_filename
+        
+        # Content-Typeヘッダーからname属性を取得
+        content_type = part.get('Content-Type', '')
+        if content_type:
+            import re
+            name_match = re.search(r'name=([^;]+)', content_type, re.IGNORECASE)
+            if name_match:
+                filename = name_match.group(1).strip('"\'')
+                decoded_filename = decode_mime_filename(filename)
+                self.logger.debug(f"Content-Typeからファイル名デコード: '{filename}' -> '{decoded_filename}'")
+                return decoded_filename
+        
+        return None
+    
+    def _log_email_structure(self, email_message):
+        """デバッグ用：メールの構造をログ出力"""
+        self.logger.debug("=== メール構造の詳細 ===")
+        for i, part in enumerate(email_message.walk()):
+            content_type = part.get_content_type()
+            content_disposition = part.get_content_disposition()
+            filename = part.get_filename()
+            decoded_filename = self._get_attachment_filename(part)
+            is_multipart = part.is_multipart()
+            
+            self.logger.debug(f"Part {i}: "
+                            f"content_type={content_type}, "
+                            f"disposition={content_disposition}, "
+                            f"filename={filename}, "
+                            f"decoded_filename={decoded_filename}, "
+                            f"multipart={is_multipart}")
+            
+            # CSVファイルかどうかをチェック
+            if decoded_filename and decoded_filename.lower().endswith('.csv'):
+                self.logger.debug(f"  *** CSVファイルを検出: {decoded_filename} ***")
+                            
+            # ヘッダー情報も出力
+            if hasattr(part, 'items') and part.items():
+                for header_name, header_value in part.items():
+                    if header_name.lower() in ['content-type', 'content-disposition', 'content-transfer-encoding']:
+                        self.logger.debug(f"  Header {header_name}: {header_value}")
+        self.logger.debug("=== メール構造の詳細終了 ===")
     
     def extract_date_from_subject(self, subject: str) -> Optional[date]:
         """
