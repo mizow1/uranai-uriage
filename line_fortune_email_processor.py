@@ -224,7 +224,7 @@ def aggregate_service_data(auto_mode=False, target_year=None, target_month=None)
         # 結果をCSVに書き込み
         with open(output_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['サービス名', '売上合計', '情報提供料合計', 'レコード数'])
+            writer.writerow(['サービス名', 'performance', 'info_fee', 'レコード数'])
             
             # サービス名でソート
             for service_name in sorted(service_totals.keys()):
