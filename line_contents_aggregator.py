@@ -154,10 +154,9 @@ class LineContentsAggregator:
                 total_cost = row['ios_paid_cost'] + row['android_paid_cost']
                 performance, info_fee = self.calculate_metrics(total_cost)
                 results.append({
-                    'content_group': row['content_group'],
-                    'content_name': row['item_name'],
-                    'performance': performance,
-                    'info_fee': info_fee
+                    'コンテンツ名': row['content_group'],
+                    '実績': performance,
+                    '情報提供料': info_fee
                 })
             
             return pd.DataFrame(results)
@@ -267,8 +266,8 @@ class LineContentsAggregator:
                         
                         # 結果を表示
                         print(f"コンテンツ数: {len(df)}")
-                        print(f"総実績: {df['performance'].sum():,}円")
-                        print(f"総情報提供料: {df['info_fee'].sum():,}円")
+                        print(f"総実績: {df['実績'].sum():,}円")
+                        print(f"総情報提供料: {df['情報提供料'].sum():,}円")
                         print()
                     
                 else:
@@ -349,8 +348,8 @@ def main():
                 
                 if aggregator.save_contents_file(df, str(output_path)):
                     print(f"コンテンツ数: {len(df)}")
-                    print(f"総実績: {df['performance'].sum():,}円")
-                    print(f"総情報提供料: {df['info_fee'].sum():,}円")
+                    print(f"総実績: {df['実績'].sum():,}円")
+                    print(f"総情報提供料: {df['情報提供料'].sum():,}円")
                 else:
                     print("ファイル保存に失敗しました")
                     return 1

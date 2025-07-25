@@ -131,13 +131,13 @@ def aggregate_service_data(auto_mode=False, target_year=None, target_month=None)
             print(f"\n集計完了: {output_filename}")
             print(f"  処理したファイル: {menu_filename}")
             print(f"  コンテンツ数: {len(df)}")
-            print(f"  総実績: {df['performance'].sum():,}円")
-            print(f"  総情報提供料: {df['info_fee'].sum():,}円")
+            print(f"  総実績: {df['実績'].sum():,}円")
+            print(f"  総情報提供料: {df['情報提供料'].sum():,}円")
             
             # 集計結果のサマリー表示
             print("\n=== 集計結果サマリー ===")
             for _, row in df.iterrows():
-                print(f"  {row['content_group']}: 実績={row['performance']:,}, 情報提供料={row['info_fee']:,}")
+                print(f"  {row['コンテンツ名']}: 実績={row['実績']:,}, 情報提供料={row['情報提供料']:,}")
             
             return 0
         else:
