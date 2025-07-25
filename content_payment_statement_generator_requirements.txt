@@ -1,0 +1,20 @@
+# コンテンツ関連支払い明細書生成システム 依存関係
+
+# データ処理
+pandas>=1.5.0
+
+# Excel操作
+openpyxl>=3.0.10
+xlwings>=0.28.0
+
+# Google API (Gmail送信)
+google-auth>=2.15.0
+google-auth-oauthlib>=0.7.1
+google-auth-httplib2>=0.1.0
+google-api-python-client>=2.70.0
+
+# Windows COM操作 (PDF変換用)
+pywin32>=305; sys_platform == "win32"
+
+# ログ・ユーティリティ
+pathlib2>=2.3.6; python_version < "3.4"
