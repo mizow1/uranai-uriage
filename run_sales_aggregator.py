@@ -13,16 +13,12 @@ def main():
     
     # デフォルトのパス設定
     default_base_path = r"C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ISP支払通知書"
-    default_output_path = "月別ISP別コンテンツ別売上.csv"
+    output_path = "月別ISP別コンテンツ別売上.csv"  # 固定ファイル名
     
     # パス設定の確認
     base_path = input(f"データフォルダのパス (デフォルト: {default_base_path}): ").strip()
     if not base_path:
         base_path = default_base_path
-    
-    output_path = input(f"出力CSVファイル名 (デフォルト: {default_output_path}): ").strip()
-    if not output_path:
-        output_path = default_output_path
     
     # パスの存在確認
     if not Path(base_path).exists():

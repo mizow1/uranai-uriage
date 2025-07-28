@@ -155,12 +155,15 @@ class SalesDataLoader:
                 
                 # 支払年月が空白の場合はスキップ
                 if pd.isna(offset_months) or offset_months == '':
+                    self.logger.debug(f"支払年月が空白のためスキップ: {content_name} ({platform})")
                     continue
                 
                 offset_months = int(offset_months)
                 
                 # 対象年月からoffset_months分マイナスした年月を計算
                 actual_target_month = self._calculate_offset_month(target_month, offset_months)
+                
+                self.logger.debug(f"処理中: {content_name} ({platform}) - 対象年月: {actual_target_month} (オフセット: {offset_months})")
                 
                 # 計算した年月のデータを読み込み
                 actual_year = actual_target_month[:4]
@@ -170,10 +173,23 @@ class SalesDataLoader:
                 line_data = self.load_line_contents(actual_year, actual_month)
                 merged_data = self.merge_sales_data(monthly_data, line_data)
                 
+                self.logger.debug(f"データ統合結果: {len(merged_data)}件のデータ")
+                if not merged_data.empty:
+                    self.logger.debug(f"統合データの列: {list(merged_data.columns)}")
+                    # プラットフォーム列の値を確認
+                    if 'プラットフォーム' in merged_data.columns:
+                        platforms = merged_data['プラットフォーム'].unique()
+                        self.logger.debug(f"プラットフォーム一覧: {platforms}")
+                    if 'コンテンツ' in merged_data.columns:
+                        contents = merged_data['コンテンツ'].unique()
+                        self.logger.debug(f"コンテンツ一覧: {contents[:10]}")  # 最初の10件のみ表示
+                
                 # 該当するコンテンツとプラットフォームのデータを検索
                 matching_data = self._find_matching_sales_data(merged_data, content_name, platform)
                 
                 if matching_data is not None:
+                    self.logger.info(f"マッチしたデータが見つかりました: {content_name} ({platform}) - 実績: {matching_data.get('実績', 0)}")
+                    
                     # マッピングデータからテンプレートファイル名を取得
                     template_file = self._get_template_file_from_mapping(
                         content_name, platform, content_mapping
@@ -195,6 +211,8 @@ class SalesDataLoader:
                     )
                     
                     sales_records.append(record)
+                else:
+                    self.logger.warning(f"該当データが見つかりませんでした: {content_name} ({platform}) - 対象年月: {actual_target_month}")
                 
             except Exception as e:
                 self.logger.warning(f"レコード作成エラー (コンテンツ: {content_name}, プラットフォーム: {platform}): {e}")
@@ -309,10 +327,25 @@ class SalesDataLoader:
         """統合データから該当するコンテンツとプラットフォームのデータを検索"""
         try:
             if merged_data.empty:
+                self.logger.debug(f"統合データが空です: {content_name}, {platform}")
                 return None
             
             # インデックスをリセットしてDataFrameを正規化
             merged_data = merged_data.reset_index(drop=True)
+            
+            # プラットフォーム名の正規化マッピング
+            platform_mapping = {
+                'ameba': ['ameba', 'satori'],
+                'satori': ['ameba', 'satori'],
+                'au': ['au'],
+                'line': ['line'],
+                'rakuten': ['rakuten', '楽天'],
+                '楽天': ['rakuten', '楽天'],
+                'excite': ['excite']
+            }
+            
+            # 検索対象のプラットフォーム名リストを取得
+            search_platforms = platform_mapping.get(platform.lower(), [platform])
             
             # コンテンツ名での検索（完全一致）
             content_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
@@ -325,31 +358,36 @@ class SalesDataLoader:
             # プラットフォーム名での検索（完全一致）
             platform_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
             
-            if 'プラットフォーム' in merged_data.columns:
-                platform_mask |= (merged_data['プラットフォーム'].astype(str) == platform)
-            if 'ISP' in merged_data.columns:
-                platform_mask |= (merged_data['ISP'].astype(str) == platform)
+            for search_platform in search_platforms:
+                if 'プラットフォーム' in merged_data.columns:
+                    platform_mask |= (merged_data['プラットフォーム'].astype(str).str.lower() == search_platform.lower())
+                if 'ISP' in merged_data.columns:
+                    platform_mask |= (merged_data['ISP'].astype(str).str.lower() == search_platform.lower())
             
             # 両方の条件を満たすデータを検索
             matching_rows = merged_data[content_mask & platform_mask]
             
             if not matching_rows.empty:
+                self.logger.debug(f"完全一致でデータが見つかりました: {content_name}, {platform}")
                 return matching_rows.iloc[0]  # 最初のマッチするデータを返す
             
             # 完全一致しない場合は部分一致を試行
             content_partial_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
             
             if 'コンテンツ' in merged_data.columns:
-                content_partial_mask |= merged_data['コンテンツ'].astype(str).str.contains(content_name, na=False)
+                content_partial_mask |= merged_data['コンテンツ'].astype(str).str.contains(content_name, na=False, case=False)
+                content_partial_mask |= merged_data['コンテンツ'].astype(str).str.contains(content_name.replace(' ', ''), na=False, case=False)
             if 'コンテンツ名' in merged_data.columns:
-                content_partial_mask |= merged_data['コンテンツ名'].astype(str).str.contains(content_name, na=False)
+                content_partial_mask |= merged_data['コンテンツ名'].astype(str).str.contains(content_name, na=False, case=False)
+                content_partial_mask |= merged_data['コンテンツ名'].astype(str).str.contains(content_name.replace(' ', ''), na=False, case=False)
             
             platform_partial_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
             
-            if 'プラットフォーム' in merged_data.columns:
-                platform_partial_mask |= merged_data['プラットフォーム'].astype(str).str.contains(platform, na=False)
-            if 'ISP' in merged_data.columns:
-                platform_partial_mask |= merged_data['ISP'].astype(str).str.contains(platform, na=False)
+            for search_platform in search_platforms:
+                if 'プラットフォーム' in merged_data.columns:
+                    platform_partial_mask |= merged_data['プラットフォーム'].astype(str).str.contains(search_platform, na=False, case=False)
+                if 'ISP' in merged_data.columns:
+                    platform_partial_mask |= merged_data['ISP'].astype(str).str.contains(search_platform, na=False, case=False)
             
             partial_matching = merged_data[content_partial_mask & platform_partial_mask]
             
@@ -357,7 +395,16 @@ class SalesDataLoader:
                 self.logger.debug(f"部分一致でデータが見つかりました: {content_name}, {platform}")
                 return partial_matching.iloc[0]
             
+            # プラットフォームのみの検索も試行（コンテンツが見つからない場合）
+            platform_only_matching = merged_data[platform_mask]
+            if not platform_only_matching.empty:
+                self.logger.debug(f"プラットフォームのみでマッチしたデータ件数: {len(platform_only_matching)}")
+                # この場合は最初のデータを返すが、警告を出す
+                self.logger.warning(f"コンテンツ名が一致しないが、プラットフォームのみで検索: {content_name}, {platform}")
+                return platform_only_matching.iloc[0]
+            
             self.logger.debug(f"該当データが見つかりませんでした: {content_name}, {platform}")
+            self.logger.debug(f"利用可能な列: {list(merged_data.columns)}")
             return None
             
         except Exception as e:

@@ -52,26 +52,18 @@ class ExcelProcessor:
             raise
     
     def write_payment_date(self, workbook_path: str, target_month: str) -> None:
-        """S3セルに対象年月の翌月5日の日付を記入"""
+        """S3セルに対象年月の5日の日付を記入"""
         try:
             # Excelファイルを開く
             workbook = openpyxl.load_workbook(workbook_path)
             worksheet = workbook.active
             
-            # 対象年月から翌月5日を計算
+            # 対象年月の5日を計算
             year = int(target_month[:4])
             month = int(target_month[4:])
             
-            # 翌月を計算
-            if month == 12:
-                next_year = year + 1
-                next_month = 1
-            else:
-                next_year = year
-                next_month = month + 1
-            
-            # 翌月5日の日付を作成
-            payment_date = datetime(next_year, next_month, 5)
+            # 対象年月の5日の日付を作成
+            payment_date = datetime(year, month, 5)
             
             # S3セルに日付を設定
             worksheet['S3'] = payment_date
@@ -88,7 +80,7 @@ class ExcelProcessor:
             if 'workbook' in locals():
                 workbook.close()
     
-    def write_statement_details(self, workbook_path: str, sales_records: List[SalesRecord]) -> None:
+    def write_statement_details(self, workbook_path: str, sales_records: List[SalesRecord], processing_month: str) -> None:
         """23行目以降に明細データを書き込み"""
         try:
             # Excelファイルを開く
@@ -102,7 +94,7 @@ class ExcelProcessor:
                 row_num = start_row + i
                 
                 # 各列にデータを設定
-                self._write_record_to_row(worksheet, row_num, record)
+                self._write_record_to_row(worksheet, row_num, record, processing_month)
             
             # ファイルを保存
             workbook.save(workbook_path)
@@ -116,31 +108,19 @@ class ExcelProcessor:
             if 'workbook' in locals():
                 workbook.close()
     
-    def _write_record_to_row(self, worksheet: Worksheet, row_num: int, record: SalesRecord) -> None:
+    def _write_record_to_row(self, worksheet: Worksheet, row_num: int, record: SalesRecord, processing_month: str) -> None:
         """1つのSalesRecordを指定行に書き込み"""
         try:
             # 要求仕様に基づく新しいルール:
-            # A列：対象年月の翌月5日
+            # A列：処理開始時に指定した年月
             # D列：プラットフォーム名  
             # G列：コンテンツ名
             # M列：target_month.csvのC列の数値分、対象年月からマイナスした年月
             # S列：該当年月の「実績」額
             # Y列：該当年月の「情報提供料」額
             
-            year = int(record.target_month[:4])
-            month = int(record.target_month[4:])
-            
-            if month == 12:
-                next_year = year + 1
-                next_month = 1
-            else:
-                next_year = year
-                next_month = month + 1
-            
-            payment_date = datetime(next_year, next_month, 5)
-            
             # セルへの書き込み（マージセルの場合は上位セルに書き込む）
-            self._safe_write_cell(worksheet, f'A{row_num}', payment_date)          # A列：翌月5日
+            self._safe_write_cell(worksheet, f'A{row_num}', processing_month)       # A列：処理開始時に指定した年月
             self._safe_write_cell(worksheet, f'D{row_num}', record.platform)       # D列：プラットフォーム名
             self._safe_write_cell(worksheet, f'G{row_num}', record.content_name)   # G列：コンテンツ名
             self._safe_write_cell(worksheet, f'M{row_num}', record.target_month)   # M列：マイナスした年月
@@ -247,8 +227,8 @@ class ExcelProcessor:
             # 支払日を設定
             self.write_payment_date(excel_path, target_month)
             
-            # 明細データを書き込み
-            self.write_statement_details(excel_path, sales_records)
+            # 明細データを書き込み（処理月を渡す）
+            self.write_statement_details(excel_path, sales_records, target_month)
             
             self.logger.info(f"Excelファイル処理完了: {excel_path}")
             return excel_path

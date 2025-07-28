@@ -92,49 +92,87 @@ class SalesAggregator:
                     print(f"ameba占いファイル処理エラー: {file_path.name} - {str(e)}")
                     return None
             
-            # 「従量実績」シートを読み込み
-            従量実績_sheet = wb['従量実績']
-            従量実績_df = pd.DataFrame(従量実績_sheet.values)
-            従量実績_df.columns = 従量実績_df.iloc[0]
-            従量実績_df = 従量実績_df.drop(0).reset_index(drop=True)
+            # 新仕様：各シートから情報提供料を集計し、同一コンテンツは合算する
+            content_groups = {}
             
-            # 「docomo占い」シートを読み込み
-            docomo占い_sheet = wb['docomo占い']
-            docomo占い_df = pd.DataFrame(docomo占い_sheet.values)
-            docomo占い_df.columns = docomo占い_df.iloc[0]
-            docomo占い_df = docomo占い_df.drop(0).reset_index(drop=True)
+            # 1. 「従量実績」シートでC列の値が一致するもののJ列の合計額を算出
+            try:
+                従量実績_sheet = wb['従量実績']
+                従量実績_df = pd.DataFrame(従量実績_sheet.values)
+                従量実績_df.columns = 従量実績_df.iloc[0]
+                従量実績_df = 従量実績_df.drop(0).reset_index(drop=True)
+                
+                for _, row in 従量実績_df.iterrows():
+                    c_value = row.iloc[2]  # C列
+                    j_value = row.iloc[9]  # J列
+                    if pd.notna(c_value) and pd.notna(j_value):
+                        j_numeric = pd.to_numeric(j_value, errors='coerce')
+                        if pd.notna(j_numeric):
+                            if c_value not in content_groups:
+                                content_groups[c_value] = 0
+                            content_groups[c_value] += j_numeric
+                            
+            except Exception as e:
+                print(f"従量実績シート処理エラー: {e}")
             
-            # C列の値が一致するもののJ列の合計額を算出
-            c_groups = {}
-            for _, row in 従量実績_df.iterrows():
-                c_value = row.iloc[2]  # C列
-                if pd.notna(c_value):
-                    matching_docomo = docomo占い_df[docomo占い_df.iloc[:, 2] == c_value]
-                    if not matching_docomo.empty:
-                        # J列の値を数値に変換してから合計
-                        j_values = pd.to_numeric(matching_docomo.iloc[:, 9], errors='coerce')
-                        j_sum = j_values.sum()
-                        if pd.notna(j_sum) and j_sum > 0:
-                            if c_value not in c_groups:
-                                c_groups[c_value] = 0
-                            c_groups[c_value] += j_sum
+            # 2. 「docomo占い」シートでC列の値が一致するもののJ列の合計額を算出
+            try:
+                docomo占い_sheet = wb['docomo占い']
+                docomo占い_df = pd.DataFrame(docomo占い_sheet.values)
+                docomo占い_df.columns = docomo占い_df.iloc[0]
+                docomo占い_df = docomo占い_df.drop(0).reset_index(drop=True)
+                
+                for _, row in docomo占い_df.iterrows():
+                    c_value = row.iloc[2]  # C列
+                    j_value = row.iloc[9]  # J列
+                    if pd.notna(c_value) and pd.notna(j_value):
+                        j_numeric = pd.to_numeric(j_value, errors='coerce')
+                        if pd.notna(j_numeric):
+                            if c_value not in content_groups:
+                                content_groups[c_value] = 0
+                            content_groups[c_value] += j_numeric
+                            
+            except Exception as e:
+                print(f"docomo占いシート処理エラー: {e}")
             
-            情報提供料合計 = sum(c_groups.values())
-            実績 = 情報提供料合計 / 0.3 if 情報提供料合計 > 0 else 0  # 30%を除算した値
+            # 3. 「月額実績」シートのB列の値が一致するもののE列の合計額を算出
+            try:
+                月額実績_sheet = wb['月額実績']
+                月額実績_df = pd.DataFrame(月額実績_sheet.values)
+                月額実績_df.columns = 月額実績_df.iloc[0]
+                月額実績_df = 月額実績_df.drop(0).reset_index(drop=True)
+                
+                for _, row in 月額実績_df.iterrows():
+                    b_value = row.iloc[1]  # B列
+                    e_value = row.iloc[4]  # E列
+                    if pd.notna(b_value) and pd.notna(e_value):
+                        e_numeric = pd.to_numeric(e_value, errors='coerce')
+                        if pd.notna(e_numeric):
+                            if b_value not in content_groups:
+                                content_groups[b_value] = 0
+                            content_groups[b_value] += e_numeric
+                            
+            except Exception as e:
+                print(f"月額実績シート処理エラー（存在しない可能性）: {e}")
+            
+            # 合計値を計算
+            情報提供料合計 = sum(content_groups.values())
+            実績合計 = 情報提供料合計 / 0.3 if 情報提供料合計 > 0 else 0  # 30%を除算した値
             
             # details配列の作成（コンテンツごと）
             details = []
-            for c_value, j_sum in c_groups.items():
+            for content_name, 情報提供料 in content_groups.items():
+                実績 = 情報提供料 / 0.3 if 情報提供料 > 0 else 0
                 details.append({
-                    'content_group': str(c_value),
-                    '実績': round(j_sum / 0.3) if j_sum > 0 else 0,
-                    '情報提供料': round(j_sum)
+                    'content_group': str(content_name),
+                    '実績': round(実績),
+                    '情報提供料': round(情報提供料)
                 })
             
             return {
                 'platform': 'ameba',
                 'file': file_path.name,
-                '実績': round(実績),
+                '実績': round(実績合計),
                 '情報提供料合計': round(情報提供料合計),
                 'details': details
             }
@@ -152,10 +190,10 @@ class SalesAggregator:
             else:
                 df = pd.read_excel(file_path)
             
-            # ファイル名に応じて処理を分岐
+            # ファイル名にrcmsを含むファイルのみ処理
             if 'rcms' in file_path.name.lower():
                 # RCMSファイルの処理
-                # L列の値「hoge_xxx」のhoge部分が一致するもののN列の値を0.7倍
+                # L列の値「hoge_xxx」のhoge部分が一致するもののN列の値で計算
                 l_column = df.iloc[:, 11]  # L列
                 n_column = df.iloc[:, 13]  # N列
                 
@@ -173,8 +211,8 @@ class SalesAggregator:
                 
                 for hoge, values in hoge_groups.items():
                     group_sum = sum(pd.to_numeric(v, errors='coerce') for v in values if pd.notna(v))
-                    実績_sum = group_sum / 1.1  # 1.1で除算
-                    情報提供料_sum = 実績_sum * 0.7  # 70%
+                    実績_sum = group_sum / 1.1  # N列の値の合計額を1.1で除算
+                    情報提供料_sum = 実績_sum * 0.725  # 実績に0.725を乗算したものを「情報提供料合計」
                     実績_amount += 実績_sum
                     情報提供料_amount += 情報提供料_sum
                     details.append({
@@ -190,7 +228,7 @@ class SalesAggregator:
                         # B列の値が一致するもののE列の合計額を追加
                         monthly_amount = monthly_df.iloc[:, 4].sum()  # E列
                         monthly_実績 = monthly_amount / 1.1
-                        monthly_情報提供料 = monthly_実績 * 0.7
+                        monthly_情報提供料 = monthly_実績 * 0.725
                         実績_amount += monthly_実績
                         情報提供料_amount += monthly_情報提供料
                         details.append({
@@ -202,21 +240,9 @@ class SalesAggregator:
                         pass
                         
             else:
-                # 楽天明細ファイルの処理（シンプルな合計）
-                # 数値列を探して合計を計算
-                numeric_columns = df.select_dtypes(include=['number']).columns
-                if len(numeric_columns) > 0:
-                    # 最も右側の数値列を金額と仮定
-                    amount_column = numeric_columns[-1]
-                    total_amount = df[amount_column].sum()
-                    実績_amount = total_amount / 1.1
-                    情報提供料_amount = 実績_amount * 0.7
-                    details = [{'content_group': '楽天明細合計', '実績': round(実績_amount), '情報提供料': round(情報提供料_amount)}]
-                else:
-                    # 数値列が見つからない場合は0
-                    実績_amount = 0
-                    情報提供料_amount = 0
-                    details = [{'content_group': '楽天明細合計', '実績': 0, '情報提供料': 0}]
+                # rcmsファイル以外はスキップ
+                print(f"楽天占いファイル処理スキップ: {file_path.name} - rcmsファイルではありません")
+                return None
             
             return {
                 'platform': 'rakuten',
