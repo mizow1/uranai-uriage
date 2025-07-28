@@ -97,6 +97,22 @@ class SalesDataLoader:
             self.logger.error(f"レートデータ読み込みエラー: {e}")
             raise
     
+    def load_target_month_data(self) -> pd.DataFrame:
+        """target_month.csvからデータを読み込み"""
+        file_path = Path(self.config.base_paths['current_dir']) / "target_month.csv"
+        
+        if not file_path.exists():
+            raise FileNotFoundError(f"target_month.csvファイルが見つかりません: {file_path}")
+        
+        try:
+            df = pd.read_csv(file_path, encoding='utf-8-sig')
+            self.logger.info(f"target_monthデータを読み込みました: {len(df)}件")
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"target_monthデータ読み込みエラー: {e}")
+            raise
+    
     def merge_sales_data(self, monthly_data: pd.DataFrame, line_data: pd.DataFrame) -> pd.DataFrame:
         """月別売上データとLINEデータを統合"""
         if line_data.empty:
@@ -124,46 +140,64 @@ class SalesDataLoader:
         target_month = f"{year}{month.zfill(2)}"
         
         # 各データソースを読み込み
-        monthly_data = self.load_monthly_sales(target_month)
-        line_data = self.load_line_contents(year, month)
         content_mapping = self.load_content_mapping()
         rate_data = self.load_rate_data()
-        
-        # データを統合
-        merged_data = self.merge_sales_data(monthly_data, line_data)
+        target_month_data = self.load_target_month_data()
         
         sales_records = []
         
-        for _, row in merged_data.iterrows():
+        # target_month.csvの各行について処理
+        for _, row in target_month_data.iterrows():
             try:
-                # コンテンツ名からテンプレートファイルを特定
-                content_name = str(row.get('コンテンツ', row.get('コンテンツ名', '')))  # 'コンテンツ'列を優先
-                platform = str(row.get('プラットフォーム', row.get('ISP', '')))
+                content_name = str(row.get('コンテンツ', ''))
+                platform = str(row.get('プラットフォーム', ''))
+                offset_months = row.get('支払年月', '')
                 
-                # マッピングデータからテンプレートファイル名を取得
-                template_file = self._get_template_file_from_mapping(
-                    content_name, platform, content_mapping
-                )
+                # 支払年月が空白の場合はスキップ
+                if pd.isna(offset_months) or offset_months == '':
+                    continue
                 
-                # レートデータから料率とメールアドレスを取得
-                rate_info = self._get_rate_info(template_file, rate_data)
+                offset_months = int(offset_months)
                 
-                # SalesRecordを作成
-                record = SalesRecord(
-                    platform=platform,
-                    content_name=content_name,
-                    performance=float(row.get('実績', 0)),
-                    information_fee=float(row.get('情報提供料', row.get('情報提供料合計', 0))),
-                    target_month=target_month,
-                    template_file=template_file,
-                    rate=rate_info['rate'],
-                    recipient_email=rate_info['email']
-                )
+                # 対象年月からoffset_months分マイナスした年月を計算
+                actual_target_month = self._calculate_offset_month(target_month, offset_months)
                 
-                sales_records.append(record)
+                # 計算した年月のデータを読み込み
+                actual_year = actual_target_month[:4]
+                actual_month = actual_target_month[4:]
+                
+                monthly_data = self.load_monthly_sales(actual_target_month)
+                line_data = self.load_line_contents(actual_year, actual_month)
+                merged_data = self.merge_sales_data(monthly_data, line_data)
+                
+                # 該当するコンテンツとプラットフォームのデータを検索
+                matching_data = self._find_matching_sales_data(merged_data, content_name, platform)
+                
+                if matching_data is not None:
+                    # マッピングデータからテンプレートファイル名を取得
+                    template_file = self._get_template_file_from_mapping(
+                        content_name, platform, content_mapping
+                    )
+                    
+                    # レートデータから料率とメールアドレスを取得
+                    rate_info = self._get_rate_info(template_file, rate_data)
+                    
+                    # SalesRecordを作成
+                    record = SalesRecord(
+                        platform=platform,
+                        content_name=content_name,
+                        performance=float(matching_data.get('実績', 0)),
+                        information_fee=float(matching_data.get('情報提供料', matching_data.get('情報提供料合計', 0))),
+                        target_month=actual_target_month,  # 計算された実際の対象年月
+                        template_file=template_file,
+                        rate=rate_info['rate'],
+                        recipient_email=rate_info['email']
+                    )
+                    
+                    sales_records.append(record)
                 
             except Exception as e:
-                self.logger.warning(f"レコード作成エラー (行: {row.name}): {e}")
+                self.logger.warning(f"レコード作成エラー (コンテンツ: {content_name}, プラットフォーム: {platform}): {e}")
                 continue
         
         self.logger.info(f"SalesRecord作成完了: {len(sales_records)}件")
@@ -245,3 +279,87 @@ class SalesDataLoader:
         except Exception as e:
             self.logger.error(f"レート情報取得エラー: {e}")
             return {'rate': 0.0, 'email': 'mizoguchi@outward.jp'}
+    
+    def _calculate_offset_month(self, target_month: str, offset_months: int) -> str:
+        """対象年月からoffset_months分マイナスした年月を計算"""
+        try:
+            year = int(target_month[:4])
+            month = int(target_month[4:])
+            
+            # マイナス月数を加算（負の値なのでマイナスになる）
+            total_months = (year * 12 + month - 1) + offset_months
+            
+            if total_months < 0:
+                self.logger.warning(f"計算結果が負の値になりました: {target_month} + {offset_months}")
+                return target_month  # デフォルトで元の年月を返す
+            
+            result_year = total_months // 12
+            result_month = (total_months % 12) + 1
+            
+            result = f"{result_year}{result_month:02d}"
+            self.logger.debug(f"年月計算: {target_month} + {offset_months}ヶ月 = {result}")
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"年月計算エラー: {e}")
+            return target_month
+    
+    def _find_matching_sales_data(self, merged_data: pd.DataFrame, content_name: str, platform: str) -> Optional[pd.Series]:
+        """統合データから該当するコンテンツとプラットフォームのデータを検索"""
+        try:
+            if merged_data.empty:
+                return None
+            
+            # インデックスをリセットしてDataFrameを正規化
+            merged_data = merged_data.reset_index(drop=True)
+            
+            # コンテンツ名での検索（完全一致）
+            content_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
+            
+            if 'コンテンツ' in merged_data.columns:
+                content_mask |= (merged_data['コンテンツ'].astype(str) == content_name)
+            if 'コンテンツ名' in merged_data.columns:
+                content_mask |= (merged_data['コンテンツ名'].astype(str) == content_name)
+            
+            # プラットフォーム名での検索（完全一致）
+            platform_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
+            
+            if 'プラットフォーム' in merged_data.columns:
+                platform_mask |= (merged_data['プラットフォーム'].astype(str) == platform)
+            if 'ISP' in merged_data.columns:
+                platform_mask |= (merged_data['ISP'].astype(str) == platform)
+            
+            # 両方の条件を満たすデータを検索
+            matching_rows = merged_data[content_mask & platform_mask]
+            
+            if not matching_rows.empty:
+                return matching_rows.iloc[0]  # 最初のマッチするデータを返す
+            
+            # 完全一致しない場合は部分一致を試行
+            content_partial_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
+            
+            if 'コンテンツ' in merged_data.columns:
+                content_partial_mask |= merged_data['コンテンツ'].astype(str).str.contains(content_name, na=False)
+            if 'コンテンツ名' in merged_data.columns:
+                content_partial_mask |= merged_data['コンテンツ名'].astype(str).str.contains(content_name, na=False)
+            
+            platform_partial_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
+            
+            if 'プラットフォーム' in merged_data.columns:
+                platform_partial_mask |= merged_data['プラットフォーム'].astype(str).str.contains(platform, na=False)
+            if 'ISP' in merged_data.columns:
+                platform_partial_mask |= merged_data['ISP'].astype(str).str.contains(platform, na=False)
+            
+            partial_matching = merged_data[content_partial_mask & platform_partial_mask]
+            
+            if not partial_matching.empty:
+                self.logger.debug(f"部分一致でデータが見つかりました: {content_name}, {platform}")
+                return partial_matching.iloc[0]
+            
+            self.logger.debug(f"該当データが見つかりませんでした: {content_name}, {platform}")
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"売上データ検索エラー: {e}")
+            return None

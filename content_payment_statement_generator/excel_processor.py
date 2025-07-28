@@ -119,7 +119,14 @@ class ExcelProcessor:
     def _write_record_to_row(self, worksheet: Worksheet, row_num: int, record: SalesRecord) -> None:
         """1つのSalesRecordを指定行に書き込み"""
         try:
+            # 要求仕様に基づく新しいルール:
             # A列：対象年月の翌月5日
+            # D列：プラットフォーム名  
+            # G列：コンテンツ名
+            # M列：target_month.csvのC列の数値分、対象年月からマイナスした年月
+            # S列：該当年月の「実績」額
+            # Y列：該当年月の「情報提供料」額
+            
             year = int(record.target_month[:4])
             month = int(record.target_month[4:])
             
@@ -133,13 +140,15 @@ class ExcelProcessor:
             payment_date = datetime(next_year, next_month, 5)
             
             # セルへの書き込み（マージセルの場合は上位セルに書き込む）
-            self._safe_write_cell(worksheet, f'A{row_num}', payment_date)
-            self._safe_write_cell(worksheet, f'D{row_num}', record.platform)
-            self._safe_write_cell(worksheet, f'G{row_num}', record.content_name)
-            self._safe_write_cell(worksheet, f'M{row_num}', record.target_month)
-            self._safe_write_cell(worksheet, f'S{row_num}', record.performance)
-            self._safe_write_cell(worksheet, f'Y{row_num}', record.information_fee)
-            self._safe_write_cell(worksheet, f'AC{row_num}', record.rate)
+            self._safe_write_cell(worksheet, f'A{row_num}', payment_date)          # A列：翌月5日
+            self._safe_write_cell(worksheet, f'D{row_num}', record.platform)       # D列：プラットフォーム名
+            self._safe_write_cell(worksheet, f'G{row_num}', record.content_name)   # G列：コンテンツ名
+            self._safe_write_cell(worksheet, f'M{row_num}', record.target_month)   # M列：マイナスした年月
+            self._safe_write_cell(worksheet, f'S{row_num}', record.performance)    # S列：実績額
+            self._safe_write_cell(worksheet, f'Y{row_num}', record.information_fee) # Y列：情報提供料額
+            
+            # AC列（料率）は数式が存在する場合は保持し、なければ値を設定
+            self._write_rate_cell(worksheet, f'AC{row_num}', record.rate)
             
             self.logger.debug(f"行 {row_num} にレコードを書き込みました: {record.content_name}")
             
@@ -186,6 +195,30 @@ class ExcelProcessor:
             
         except Exception as e:
             self.logger.warning(f"マージセル処理エラー {cell_address}: {e}")
+    
+    def _write_rate_cell(self, worksheet: Worksheet, cell_address: str, rate_value: float) -> None:
+        """料率セルの書き込み（数式がある場合は保持）"""
+        try:
+            cell = worksheet[cell_address]
+            
+            # セルに数式がある場合は保持
+            if hasattr(cell, 'formula') and cell.formula:
+                self.logger.debug(f"セル {cell_address} に数式が存在するため保持: {cell.formula}")
+                return
+            
+            # セルの値が数式の場合も保持
+            if isinstance(cell.value, str) and cell.value.startswith('='):
+                self.logger.debug(f"セル {cell_address} に数式が存在するため保持: {cell.value}")
+                return
+            
+            # 数式がない場合は値を設定
+            self._safe_write_cell(worksheet, cell_address, rate_value)
+            self.logger.debug(f"セル {cell_address} に料率値を設定: {rate_value}")
+            
+        except Exception as e:
+            self.logger.warning(f"料率セル処理エラー {cell_address}: {e}")
+            # エラーが発生した場合は通常の書き込みを試行
+            self._safe_write_cell(worksheet, cell_address, rate_value)
     
     def calculate_payment_amount(self, performance: float, rate: float) -> float:
         """支払額を計算（実績 × 料率）"""
