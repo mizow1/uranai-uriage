@@ -28,6 +28,7 @@ class SalesAggregator:
             if year_folder.is_dir() and re.match(r'\d{4}', year_folder.name):
                 for month_folder in year_folder.iterdir():
                     if month_folder.is_dir() and re.match(r'\d{6}', month_folder.name):
+                        # 月フォルダ直下のファイルを検索
                         for file in month_folder.iterdir():
                             if file.is_file():
                                 filename = file.name.lower()
@@ -39,8 +40,13 @@ class SalesAggregator:
                                     files_by_platform['au'].append(file)
                                 elif 'excite' in filename:
                                     files_by_platform['excite'].append(file)
-                                elif 'line' in filename and (file.suffix.lower() in ['.xls', '.xlsx']):
-                                    files_by_platform['line'].append(file)
+                            # サブフォルダも検索（LINEファイル用）
+                            elif file.is_dir():
+                                for subfile in file.iterdir():
+                                    if subfile.is_file():
+                                        subfilename = subfile.name.lower()
+                                        if subfilename.startswith('line-contents-') and (subfile.suffix.lower() in ['.xls', '.xlsx', '.csv']):
+                                            files_by_platform['line'].append(subfile)
         
         return files_by_platform
     
@@ -486,103 +492,148 @@ class SalesAggregator:
     def process_line_file(self, file_path):
         """LINE占いファイルを処理"""
         try:
-            # 「内訳」シートを読み込み
-            try:
-                if file_path.suffix.lower() == '.xlsx':
-                    df = pd.read_excel(file_path, sheet_name='内訳', engine='openpyxl')
+            # CSVファイルとExcelファイルで処理を分ける
+            if file_path.suffix.lower() == '.csv':
+                # CSVファイルの処理（2022年形式）
+                try:
+                    df = pd.read_csv(file_path, encoding='utf-8-sig')
+                except UnicodeDecodeError:
+                    df = pd.read_csv(file_path, encoding='shift_jis')
+                
+                # CSVファイルは既に集計済みの形式（コンテンツ名,実績,情報提供料）
+                if len(df.columns) >= 3:
+                    content_column = df.iloc[:, 0]  # コンテンツ名列
+                    jisseki_column = df.iloc[:, 1]  # 実績列
+                    info_fee_column = df.iloc[:, 2]  # 情報提供料列
+                    
+                    実績_amount = 0
+                    情報提供料_amount = 0
+                    details = []
+                    
+                    for i, content_name in enumerate(content_column):
+                        if pd.notna(content_name):
+                            jisseki_value = pd.to_numeric(jisseki_column.iloc[i], errors='coerce')
+                            info_fee_value = pd.to_numeric(info_fee_column.iloc[i], errors='coerce')
+                            
+                            if pd.notna(jisseki_value) and pd.notna(info_fee_value):
+                                実績_amount += jisseki_value
+                                情報提供料_amount += info_fee_value
+                                details.append({
+                                    'content_group': str(content_name),
+                                    '実績': round(jisseki_value),
+                                    '情報提供料': round(info_fee_value)
+                                })
+                    
+                    return {
+                        'platform': 'line',
+                        'file': file_path.name,
+                        '実績': round(実績_amount),
+                        '情報提供料合計': round(情報提供料_amount),
+                        'details': details
+                    }
                 else:
-                    # .xlsファイルの場合は最初にxlrdを試す
-                    df = None
-                    try:
-                        # xlrdで試す（.xlsファイルの標準的なライブラリ）
-                        df = pd.read_excel(file_path, sheet_name='内訳', engine='xlrd')
-                    except Exception as xlrd_error:
+                    print(f"LINE占いCSVファイル処理エラー: {file_path.name} - 列数が不足しています")
+                    return None
+            
+            else:
+                # Excelファイルの処理（2023年2月以降形式）
+                # 「内訳」シートを読み込み
+                try:
+                    if file_path.suffix.lower() == '.xlsx':
+                        df = pd.read_excel(file_path, sheet_name='内訳', engine='openpyxl')
+                    else:
+                        # .xlsファイルの場合は最初にxlrdを試す
+                        df = None
                         try:
-                            # openpyxlで試す
-                            df = pd.read_excel(file_path, sheet_name='内訳', engine='openpyxl')
-                        except Exception as openpyxl_error:
+                            # xlrdで試す（.xlsファイルの標準的なライブラリ）
+                            df = pd.read_excel(file_path, sheet_name='内訳', engine='xlrd')
+                        except Exception as xlrd_error:
                             try:
-                                # calamine（新しいライブラリ）で試す
-                                df = pd.read_excel(file_path, sheet_name='内訳', engine='calamine')
-                            except Exception as calamine_error:
-                                print(f"LINE占いファイル処理エラー: {file_path.name} - .xlsファイルの読み込みエラー (xlrd: {str(xlrd_error)[:50]}, openpyxl: {str(openpyxl_error)[:50]})")
-                                return None
-            except Exception as e:
-                print(f"LINE占いファイル処理エラー: {file_path.name} - {str(e)}")
-                return None
-            
-            # 1行目で必要な列を特定
-            item_name_column_index = None
-            standard_amount_column_index = None
-            rs_amount_column_index = None
-            
-            for i, col_name in enumerate(df.columns):
-                if pd.notna(col_name):
-                    col_name_str = str(col_name)
-                    if 'アイテム名' in col_name_str:
-                        item_name_column_index = i
-                    elif '基準額（税込）' in col_name_str:
-                        standard_amount_column_index = i
-                    elif 'RS金額' in col_name_str:
-                        rs_amount_column_index = i
-            
-            if item_name_column_index is None:
-                print(f"LINE占いファイル処理エラー: {file_path.name} - 「アイテム名」列が見つかりません")
-                return None
-            
-            if standard_amount_column_index is None:
-                print(f"LINE占いファイル処理エラー: {file_path.name} - 「基準額（税込）」列が見つかりません")
-                return None
-            
-            if rs_amount_column_index is None:
-                print(f"LINE占いファイル処理エラー: {file_path.name} - 「RS金額」列が見つかりません")
-                return None
-            
-            item_name_column = df.iloc[:, item_name_column_index]  # アイテム名列
-            standard_amount_column = df.iloc[:, standard_amount_column_index]  # 基準額（税込）列
-            rs_amount_column = df.iloc[:, rs_amount_column_index]  # RS金額列
-            
-            # アイテム名でグループ化して基準額（税込）とRS金額の合計を計算
-            item_groups = {}
-            for i, item_name in enumerate(item_name_column):
-                if pd.notna(item_name):
-                    if item_name not in item_groups:
-                        item_groups[item_name] = {'standard_values': [], 'rs_values': []}
-                    
-                    standard_value = pd.to_numeric(standard_amount_column.iloc[i], errors='coerce')
-                    rs_value = pd.to_numeric(rs_amount_column.iloc[i], errors='coerce')
-                    
-                    if pd.notna(standard_value):
-                        item_groups[item_name]['standard_values'].append(standard_value)
-                    if pd.notna(rs_value):
-                        item_groups[item_name]['rs_values'].append(rs_value)
-            
-            実績_amount = 0
-            情報提供料_amount = 0
-            details = []
-            
-            for item_name, values in item_groups.items():
-                standard_sum = sum(values['standard_values'])
-                rs_sum = sum(values['rs_values'])
+                                # openpyxlで試す
+                                df = pd.read_excel(file_path, sheet_name='内訳', engine='openpyxl')
+                            except Exception as openpyxl_error:
+                                try:
+                                    # calamine（新しいライブラリ）で試す
+                                    df = pd.read_excel(file_path, sheet_name='内訳', engine='calamine')
+                                except Exception as calamine_error:
+                                    print(f"LINE占いファイル処理エラー: {file_path.name} - .xlsファイルの読み込みエラー (xlrd: {str(xlrd_error)[:50]}, openpyxl: {str(openpyxl_error)[:50]})")
+                                    return None
+                except Exception as e:
+                    print(f"LINE占いファイル処理エラー: {file_path.name} - {str(e)}")
+                    return None
                 
-                実績_sum = standard_sum / 1.1 if standard_sum > 0 else 0
-                情報提供料_sum = rs_sum / 1.1 if rs_sum > 0 else 0
+                # 1行目で必要な列を特定
+                item_name_column_index = None
+                standard_amount_column_index = None
+                rs_amount_column_index = None
                 
-                実績_amount += 実績_sum
-                情報提供料_amount += 情報提供料_sum
-                details.append({
-                    'content_group': str(item_name),
-                    '実績': round(実績_sum) if pd.notna(実績_sum) else 0,
-                    '情報提供料': round(情報提供料_sum) if pd.notna(情報提供料_sum) else 0
-                })
-            
-            return {
-                'platform': 'line',
-                'file': file_path.name,
-                '実績': round(実績_amount),
-                '情報提供料合計': round(情報提供料_amount),
-                'details': details
-            }
+                for i, col_name in enumerate(df.columns):
+                    if pd.notna(col_name):
+                        col_name_str = str(col_name)
+                        if 'アイテム名' in col_name_str:
+                            item_name_column_index = i
+                        elif '基準額（税込）' in col_name_str:
+                            standard_amount_column_index = i
+                        elif 'RS金額' in col_name_str:
+                            rs_amount_column_index = i
+                
+                if item_name_column_index is None:
+                    print(f"LINE占いファイル処理エラー: {file_path.name} - 「アイテム名」列が見つかりません")
+                    return None
+                
+                if standard_amount_column_index is None:
+                    print(f"LINE占いファイル処理エラー: {file_path.name} - 「基準額（税込）」列が見つかりません")
+                    return None
+                
+                if rs_amount_column_index is None:
+                    print(f"LINE占いファイル処理エラー: {file_path.name} - 「RS金額」列が見つかりません")
+                    return None
+                
+                item_name_column = df.iloc[:, item_name_column_index]  # アイテム名列
+                standard_amount_column = df.iloc[:, standard_amount_column_index]  # 基準額（税込）列
+                rs_amount_column = df.iloc[:, rs_amount_column_index]  # RS金額列
+                
+                # アイテム名でグループ化して基準額（税込）とRS金額の合計を計算
+                item_groups = {}
+                for i, item_name in enumerate(item_name_column):
+                    if pd.notna(item_name):
+                        if item_name not in item_groups:
+                            item_groups[item_name] = {'standard_values': [], 'rs_values': []}
+                        
+                        standard_value = pd.to_numeric(standard_amount_column.iloc[i], errors='coerce')
+                        rs_value = pd.to_numeric(rs_amount_column.iloc[i], errors='coerce')
+                        
+                        if pd.notna(standard_value):
+                            item_groups[item_name]['standard_values'].append(standard_value)
+                        if pd.notna(rs_value):
+                            item_groups[item_name]['rs_values'].append(rs_value)
+                
+                実績_amount = 0
+                情報提供料_amount = 0
+                details = []
+                
+                for item_name, values in item_groups.items():
+                    standard_sum = sum(values['standard_values'])
+                    rs_sum = sum(values['rs_values'])
+                    
+                    実績_sum = standard_sum / 1.1 if standard_sum > 0 else 0
+                    情報提供料_sum = rs_sum / 1.1 if rs_sum > 0 else 0
+                    
+                    実績_amount += 実績_sum
+                    情報提供料_amount += 情報提供料_sum
+                    details.append({
+                        'content_group': str(item_name),
+                        '実績': round(実績_sum) if pd.notna(実績_sum) else 0,
+                        '情報提供料': round(情報提供料_sum) if pd.notna(情報提供料_sum) else 0
+                    })
+                
+                return {
+                    'platform': 'line',
+                    'file': file_path.name,
+                    '実績': round(実績_amount),
+                    '情報提供料合計': round(情報提供料_amount),
+                    'details': details
+                }
             
         except Exception as e:
             print(f"LINE占いファイル処理エラー: {file_path.name} - {str(e)}")
@@ -666,8 +717,17 @@ class SalesAggregator:
                     if year_folder.is_dir() and re.match(r'\d{4}', year_folder.name):
                         for month_folder in year_folder.iterdir():
                             if month_folder.is_dir() and re.match(r'\d{6}', month_folder.name):
+                                # 月フォルダ直下のファイルをチェック
                                 if any(result['file'] in str(f.name) for f in month_folder.iterdir() if f.is_file()):
                                     yearmonth = month_folder.name
+                                    break
+                                # サブフォルダ内のファイルもチェック
+                                for subfolder in month_folder.iterdir():
+                                    if subfolder.is_dir():
+                                        if any(result['file'] in str(f.name) for f in subfolder.iterdir() if f.is_file()):
+                                            yearmonth = month_folder.name
+                                            break
+                                if yearmonth != '不明':
                                     break
                         if yearmonth != '不明':
                             break
