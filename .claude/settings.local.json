@@ -12,7 +12,8 @@
       "Bash(python:*)",
       "Bash(if exist \"line-menu-2025-07.csv\" del \"line-menu-2025-07.csv\")",
       "Bash(tail:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(sed:*)"
     ],
     "deny": []
   }

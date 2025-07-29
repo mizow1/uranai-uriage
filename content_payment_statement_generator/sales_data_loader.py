@@ -153,15 +153,14 @@ class SalesDataLoader:
                 platform = str(row.get('プラットフォーム', ''))
                 offset_months = row.get('支払年月', '')
                 
-                # 支払年月が空白の場合はスキップ
-                if pd.isna(offset_months) or offset_months == '':
-                    self.logger.debug(f"支払年月が空白のためスキップ: {content_name} ({platform})")
-                    continue
-                
-                offset_months = int(offset_months)
-                
-                # 対象年月からoffset_months分マイナスした年月を計算
-                actual_target_month = self._calculate_offset_month(target_month, offset_months)
+                # 支払年月が空白の場合は対象外（コンテンツ自体が存在しない）として処理をスキップ
+                if pd.isna(offset_months) or offset_months == '' or str(offset_months).strip() == '':
+                    self.logger.debug(f"支払年月が空白のため対象外（コンテンツ自体が存在しない）: {content_name} ({platform})")
+                    continue  # この行をスキップして次の行へ
+                else:
+                    offset_months = int(offset_months)
+                    # 対象年月からoffset_months分マイナスした年月を計算
+                    actual_target_month = self._calculate_offset_month(target_month, offset_months)
                 
                 self.logger.debug(f"処理中: {content_name} ({platform}) - 対象年月: {actual_target_month} (オフセット: {offset_months})")
                 
@@ -184,35 +183,80 @@ class SalesDataLoader:
                         contents = merged_data['コンテンツ'].unique()
                         self.logger.debug(f"コンテンツ一覧: {contents[:10]}")  # 最初の10件のみ表示
                 
-                # 該当するコンテンツとプラットフォームのデータを検索
-                matching_data = self._find_matching_sales_data(merged_data, content_name, platform)
+                # contents_mapping.csvから実際のコンテンツ名を取得してから検索
+                template_files = self._get_template_files_from_mapping(
+                    content_name, platform, content_mapping
+                )
+                
+                matching_data = None
+                # 各テンプレートファイルに対応する実際のコンテンツ名で検索
+                # C列に値がある場合は0円データも許可
+                allow_zero = not pd.isna(offset_months) and str(offset_months).strip() != ''
+                
+                for template_file, actual_content_name in template_files:
+                    matching_data = self._find_matching_sales_data(merged_data, actual_content_name, platform, allow_zero_performance=allow_zero)
+                    if matching_data is not None:
+                        self.logger.debug(f"マッチしたコンテンツ名: {actual_content_name}")
+                        break
                 
                 if matching_data is not None:
                     self.logger.info(f"マッチしたデータが見つかりました: {content_name} ({platform}) - 実績: {matching_data.get('実績', 0)}")
                     
-                    # マッピングデータからテンプレートファイル名を取得
-                    template_file = self._get_template_file_from_mapping(
-                        content_name, platform, content_mapping
-                    )
-                    
-                    # レートデータから料率とメールアドレスを取得
-                    rate_info = self._get_rate_info(template_file, rate_data)
-                    
-                    # SalesRecordを作成
-                    record = SalesRecord(
-                        platform=platform,
-                        content_name=content_name,
-                        performance=float(matching_data.get('実績', 0)),
-                        information_fee=float(matching_data.get('情報提供料', matching_data.get('情報提供料合計', 0))),
-                        target_month=actual_target_month,  # 計算された実際の対象年月
-                        template_file=template_file,
-                        rate=rate_info['rate'],
-                        recipient_email=rate_info['email']
-                    )
-                    
-                    sales_records.append(record)
+                    # 各テンプレートファイルに対してSalesRecordを作成
+                    for template_file, actual_content_name in template_files:
+                        # actual_content_nameが空文字の場合はそのプラットフォームでコンテンツが存在しないためスキップ
+                        if not actual_content_name or actual_content_name.strip() == '':
+                            self.logger.info(f"コンテンツ名が空文字のためスキップ: {content_name} ({platform})")
+                            continue
+                            
+                        # レートデータから料率とメールアドレスを取得
+                        rate_info = self._get_rate_info(template_file, rate_data)
+                        
+                        # SalesRecordを作成
+                        record = SalesRecord(
+                            platform=platform,
+                            content_name=actual_content_name,  # 実際のコンテンツ名を使用
+                            performance=float(matching_data.get('実績', 0)),
+                            information_fee=float(matching_data.get('情報提供料', matching_data.get('情報提供料合計', 0))),
+                            target_month=actual_target_month,  # 計算された実際の対象年月
+                            template_file=template_file,
+                            rate=rate_info['rate'],
+                            recipient_email=rate_info['email']
+                        )
+                        
+                        sales_records.append(record)
                 else:
+                    # データが見つからない場合、C列（支払年月）に値があるかチェック
+                    # C列に値がある場合は売上0円でも記載する
                     self.logger.warning(f"該当データが見つかりませんでした: {content_name} ({platform}) - 対象年月: {actual_target_month}")
+                    
+                    # C列に値がある（支払年月が指定されている）場合は0円で記載
+                    if not pd.isna(offset_months) and str(offset_months).strip() != '':
+                        self.logger.info(f"支払年月が指定されているため0円で記載: {content_name} ({platform})")
+                        
+                        # 各テンプレートファイルに対してSalesRecordを作成（実績0円）
+                        for template_file, actual_content_name in template_files:
+                            # actual_content_nameが空文字の場合はそのプラットフォームでコンテンツが存在しないためスキップ
+                            if not actual_content_name or actual_content_name.strip() == '':
+                                self.logger.info(f"コンテンツ名が空文字のためスキップ: {content_name} ({platform})")
+                                continue
+                                
+                            # レートデータから料率とメールアドレスを取得
+                            rate_info = self._get_rate_info(template_file, rate_data)
+                            
+                            # SalesRecordを作成（実績・情報提供料ともに0）
+                            record = SalesRecord(
+                                platform=platform,
+                                content_name=actual_content_name,  # 実際のコンテンツ名を使用
+                                performance=0.0,  # 実績0円
+                                information_fee=0.0,  # 情報提供料0円
+                                target_month=actual_target_month,  # 計算された実際の対象年月
+                                template_file=template_file,
+                                rate=rate_info['rate'],
+                                recipient_email=rate_info['email']
+                            )
+                            
+                            sales_records.append(record)
                 
             except Exception as e:
                 self.logger.warning(f"レコード作成エラー (コンテンツ: {content_name}, プラットフォーム: {platform}): {e}")
@@ -221,10 +265,10 @@ class SalesDataLoader:
         self.logger.info(f"SalesRecord作成完了: {len(sales_records)}件")
         return sales_records
     
-    def _get_template_file_from_mapping(
+    def _get_template_files_from_mapping(
         self, content_name: str, platform: str, mapping_df: pd.DataFrame
-    ) -> str:
-        """コンテンツマッピングからテンプレートファイル名を取得"""
+    ) -> List[Tuple[str, str]]:
+        """コンテンツマッピングからテンプレートファイル名と実際のコンテンツ名のリストを取得"""
         try:
             # プラットフォーム別の列名マッピング
             platform_column_map = {
@@ -232,6 +276,7 @@ class SalesDataLoader:
                 'line': 'LINE', 
                 'satori': 'ameba',  # satoriプラットフォームはameba列を参照
                 'ameba': 'ameba',   # amebaプラットフォームはameba列を参照
+                'mediba': 'mediba',  # medibaは独立したプラットフォーム
                 'rakuten': '楽天',  # rakutenは楽天列を使用
                 '楽天': '楽天',
                 'excite': 'excite'
@@ -242,29 +287,85 @@ class SalesDataLoader:
             
             if target_column not in mapping_df.columns:
                 self.logger.warning(f"プラットフォーム列が見つかりません: {target_column}")
-                return "default_template.xlsx"
+                return [("default_template.xlsx", content_name)]
             
-            # コンテンツ名で検索（部分一致も試行）
+            # コンテンツ名で検索
             for _, row in mapping_df.iterrows():
-                platform_content = str(row.get(target_column, ''))
+                # A列（テンプレートファイル名）でまず検索
+                row_content_name = str(row.iloc[0])  # A列のコンテンツ名
+                platform_content = str(row.get(target_column, ''))  # プラットフォーム列の値
                 
-                # 完全一致
-                if platform_content == content_name:
-                    template_file = str(row.iloc[0])  # A列のテンプレートファイル名
-                    return template_file + '.xlsx' if not template_file.endswith(('.xlsx', '.xls')) else template_file
+                self.logger.debug(f"マッピング検索: {content_name} ({platform}) vs A列='{row_content_name}', {target_column}列='{platform_content}'")
                 
-                # 部分一致（コンテンツ名が含まれる場合）
-                if content_name in platform_content or platform_content in content_name:
-                    template_file = str(row.iloc[0])  # A列のテンプレートファイル名
-                    return template_file + '.xlsx' if not template_file.endswith(('.xlsx', '.xls')) else template_file
+                # A列のコンテンツ名と一致するかチェック
+                if row_content_name == content_name:
+                    templates = []
+                    
+                    # medibaプラットフォームの場合、D列（4列目）のコンテンツ名のみを使用
+                    if target_column == 'mediba':
+                        # D列（4列目）のコンテンツ名を取得
+                        mediba_content = ''
+                        if len(row) > 3:
+                            mediba_content = str(row.iloc[3])  # D列
+                        
+                        # D列が有効な値でない場合はC列を確認
+                        if not mediba_content or mediba_content == 'nan' or mediba_content == '':
+                            if len(row) > 2:
+                                mediba_content = str(row.iloc[2])  # C列
+                        
+                        # それでも有効でない場合はデフォルト
+                        if not mediba_content or mediba_content == 'nan' or mediba_content == '':
+                            mediba_content = content_name
+                            
+                        self.logger.debug(f"mediba マッピング一致: {content_name} -> actual_content_name='{mediba_content}'")
+                        
+                        # A列のテンプレートファイル
+                        template_a = str(row.iloc[0])
+                        if template_a and template_a != '' and not pd.isna(template_a):
+                            template_file_a = template_a + '.xlsx' if not template_a.endswith(('.xlsx', '.xls')) else template_a
+                            templates.append((template_file_a, mediba_content))
+                        
+                        # B列のテンプレートファイル（存在する場合）
+                        if len(row) > 1 and pd.notna(row.iloc[1]) and str(row.iloc[1]) != '':
+                            template_b = str(row.iloc[1])
+                            template_file_b = template_b + '.xlsx' if not template_b.endswith(('.xlsx', '.xls')) else template_b
+                            templates.append((template_file_b, mediba_content))
+                    else:
+                        # mediba以外のプラットフォームの場合
+                        if platform_content and platform_content != 'nan' and platform_content.strip() != '':
+                            actual_content_name = str(platform_content)
+                        else:
+                            # プラットフォーム列が空欄の場合は、そのプラットフォームでのコンテンツは存在しないものとして空文字を設定
+                            if target_column.lower() in ['line', '楽天', 'excite', 'ameba']:
+                                actual_content_name = ''  # 空文字で明示的に存在しないことを示す
+                            else:
+                                actual_content_name = content_name  # その他のプラットフォームはデフォルト値を使用
+                        
+                        self.logger.debug(f"マッピング一致: {content_name} -> actual_content_name='{actual_content_name}'")
+                        
+                        # A列のテンプレートファイル
+                        template_a = str(row.iloc[0])
+                        if template_a and template_a != '' and not pd.isna(template_a):
+                            template_file_a = template_a + '.xlsx' if not template_a.endswith(('.xlsx', '.xls')) else template_a
+                            templates.append((template_file_a, actual_content_name))
+                        
+                        # B列のテンプレートファイル（存在する場合）
+                        if len(row) > 1 and pd.notna(row.iloc[1]) and str(row.iloc[1]) != '':
+                            template_b = str(row.iloc[1])
+                            template_file_b = template_b + '.xlsx' if not template_b.endswith(('.xlsx', '.xls')) else template_b
+                            templates.append((template_file_b, actual_content_name))
+                    
+                    if templates:
+                        self.logger.info(f"テンプレートファイルが見つかりました: {content_name} ({platform}) -> {[t[0] for t in templates]}")
+                        return templates
             
             # マッチしない場合はデフォルト
             self.logger.warning(f"テンプレートファイルが見つかりません: {content_name} ({platform})")
-            return "default_template.xlsx"
+            return [("default_template.xlsx", content_name)]
             
         except Exception as e:
             self.logger.error(f"テンプレートファイル取得エラー: {e}")
-            return "default_template.xlsx"
+            return [("default_template.xlsx", content_name)]
     
     def _get_rate_info(self, template_file: str, rate_df: pd.DataFrame) -> Dict[str, any]:
         """レートデータから料率とメールアドレスを取得"""
@@ -323,7 +424,7 @@ class SalesDataLoader:
             self.logger.error(f"年月計算エラー: {e}")
             return target_month
     
-    def _find_matching_sales_data(self, merged_data: pd.DataFrame, content_name: str, platform: str) -> Optional[pd.Series]:
+    def _find_matching_sales_data(self, merged_data: pd.DataFrame, content_name: str, platform: str, allow_zero_performance: bool = False) -> Optional[pd.Series]:
         """統合データから該当するコンテンツとプラットフォームのデータを検索"""
         try:
             if merged_data.empty:
@@ -335,8 +436,9 @@ class SalesDataLoader:
             
             # プラットフォーム名の正規化マッピング
             platform_mapping = {
-                'ameba': ['ameba', 'satori'],
-                'satori': ['ameba', 'satori'],
+                'ameba': ['ameba', 'satori'],  # amebaはsatoriデータも含む
+                'satori': ['ameba', 'satori'], 
+                'mediba': ['mediba'],  # medibaは独立したプラットフォーム
                 'au': ['au'],
                 'line': ['line'],
                 'rakuten': ['rakuten', '楽天'],
@@ -352,8 +454,10 @@ class SalesDataLoader:
             
             if 'コンテンツ' in merged_data.columns:
                 content_mask |= (merged_data['コンテンツ'].astype(str) == content_name)
+                self.logger.debug(f"コンテンツ列での検索: '{content_name}' -> {content_mask.sum()}件マッチ")
             if 'コンテンツ名' in merged_data.columns:
                 content_mask |= (merged_data['コンテンツ名'].astype(str) == content_name)
+                self.logger.debug(f"コンテンツ名列での検索: '{content_name}' -> {content_mask.sum()}件マッチ")
             
             # プラットフォーム名での検索（完全一致）
             platform_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
@@ -369,7 +473,17 @@ class SalesDataLoader:
             
             if not matching_rows.empty:
                 self.logger.debug(f"完全一致でデータが見つかりました: {content_name}, {platform}")
-                return matching_rows.iloc[0]  # 最初のマッチするデータを返す
+                # 実績が0より大きいレコードを優先的に返す
+                valid_rows = matching_rows[matching_rows['実績'] > 0]
+                if not valid_rows.empty:
+                    return valid_rows.iloc[0]
+                elif allow_zero_performance:
+                    # 0円データも許可する場合は最初の行を返す
+                    self.logger.debug(f"完全一致で実績0のデータを返します: {content_name}, {platform}")
+                    return matching_rows.iloc[0]
+                else:
+                    self.logger.debug(f"完全一致したが実績が0のデータのみ: {content_name}, {platform}")
+                    return None
             
             # 完全一致しない場合は部分一致を試行
             content_partial_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
@@ -393,15 +507,21 @@ class SalesDataLoader:
             
             if not partial_matching.empty:
                 self.logger.debug(f"部分一致でデータが見つかりました: {content_name}, {platform}")
-                return partial_matching.iloc[0]
+                # 実績が0より大きいレコードを優先的に返す
+                valid_rows = partial_matching[partial_matching['実績'] > 0]
+                if not valid_rows.empty:
+                    return valid_rows.iloc[0]
+                elif allow_zero_performance:
+                    # 0円データも許可する場合は最初の行を返す
+                    self.logger.debug(f"部分一致で実績0のデータを返します: {content_name}, {platform}")
+                    return partial_matching.iloc[0]
+                else:
+                    self.logger.debug(f"部分一致したが実績が0のデータのみ: {content_name}, {platform}")
+                    return None
             
-            # プラットフォームのみの検索も試行（コンテンツが見つからない場合）
-            platform_only_matching = merged_data[platform_mask]
-            if not platform_only_matching.empty:
-                self.logger.debug(f"プラットフォームのみでマッチしたデータ件数: {len(platform_only_matching)}")
-                # この場合は最初のデータを返すが、警告を出す
-                self.logger.warning(f"コンテンツ名が一致しないが、プラットフォームのみで検索: {content_name}, {platform}")
-                return platform_only_matching.iloc[0]
+            # プラットフォームのみの検索は行わない
+            # コンテンツ名が一致しない場合は検索結果なしとする
+            # これにより異なるプラットフォームのコンテンツ名が誤って表示されることを防ぐ
             
             self.logger.debug(f"該当データが見つかりませんでした: {content_name}, {platform}")
             self.logger.debug(f"利用可能な列: {list(merged_data.columns)}")
