@@ -189,33 +189,37 @@ class SalesDataLoader:
                 )
                 
                 matching_data = None
-                # 各テンプレートファイルに対応する実際のコンテンツ名で検索
+                # 各テンプレートファイルに対応するコンテンツ名で検索
                 # C列に値がある場合は0円データも許可
                 allow_zero = not pd.isna(offset_months) and str(offset_months).strip() != ''
                 
-                for template_file, actual_content_name in template_files:
-                    matching_data = self._find_matching_sales_data(merged_data, actual_content_name, platform, allow_zero_performance=allow_zero)
+                for template_file, output_content_name, search_candidates in template_files:
+                    # 複数の検索候補で売上データを検索
+                    for search_content in search_candidates:
+                        matching_data = self._find_matching_sales_data(merged_data, search_content, platform, allow_zero_performance=allow_zero)
+                        if matching_data is not None:
+                            self.logger.debug(f"マッチしたコンテンツ名: {search_content}")
+                            break
                     if matching_data is not None:
-                        self.logger.debug(f"マッチしたコンテンツ名: {actual_content_name}")
                         break
                 
                 if matching_data is not None:
                     self.logger.info(f"マッチしたデータが見つかりました: {content_name} ({platform}) - 実績: {matching_data.get('実績', 0)}")
                     
                     # 各テンプレートファイルに対してSalesRecordを作成
-                    for template_file, actual_content_name in template_files:
-                        # actual_content_nameが空文字の場合はそのプラットフォームでコンテンツが存在しないためスキップ
-                        if not actual_content_name or actual_content_name.strip() == '':
+                    for template_file, output_content_name, search_candidates in template_files:
+                        # output_content_nameが空文字の場合はそのプラットフォームでコンテンツが存在しないためスキップ
+                        if not output_content_name or output_content_name.strip() == '':
                             self.logger.info(f"コンテンツ名が空文字のためスキップ: {content_name} ({platform})")
                             continue
                             
                         # レートデータから料率とメールアドレスを取得
                         rate_info = self._get_rate_info(template_file, rate_data)
                         
-                        # SalesRecordを作成
+                        # SalesRecordを作成（出力用コンテンツ名を使用）
                         record = SalesRecord(
                             platform=platform,
-                            content_name=actual_content_name,  # 実際のコンテンツ名を使用
+                            content_name=output_content_name,  # 出力用コンテンツ名を使用（D列優先）
                             performance=float(matching_data.get('実績', 0)),
                             information_fee=float(matching_data.get('情報提供料', matching_data.get('情報提供料合計', 0))),
                             target_month=actual_target_month,  # 計算された実際の対象年月
@@ -235,19 +239,19 @@ class SalesDataLoader:
                         self.logger.info(f"支払年月が指定されているため0円で記載: {content_name} ({platform})")
                         
                         # 各テンプレートファイルに対してSalesRecordを作成（実績0円）
-                        for template_file, actual_content_name in template_files:
-                            # actual_content_nameが空文字の場合はそのプラットフォームでコンテンツが存在しないためスキップ
-                            if not actual_content_name or actual_content_name.strip() == '':
+                        for template_file, output_content_name, search_candidates in template_files:
+                            # output_content_nameが空文字の場合はそのプラットフォームでコンテンツが存在しないためスキップ
+                            if not output_content_name or output_content_name.strip() == '':
                                 self.logger.info(f"コンテンツ名が空文字のためスキップ: {content_name} ({platform})")
                                 continue
                                 
                             # レートデータから料率とメールアドレスを取得
                             rate_info = self._get_rate_info(template_file, rate_data)
                             
-                            # SalesRecordを作成（実績・情報提供料ともに0）
+                            # SalesRecordを作成（実績・情報提供料ともに0、出力用コンテンツ名を使用）
                             record = SalesRecord(
                                 platform=platform,
-                                content_name=actual_content_name,  # 実際のコンテンツ名を使用
+                                content_name=output_content_name,  # 出力用コンテンツ名を使用（D列優先）
                                 performance=0.0,  # 実績0円
                                 information_fee=0.0,  # 情報提供料0円
                                 target_month=actual_target_month,  # 計算された実際の対象年月
@@ -301,35 +305,50 @@ class SalesDataLoader:
                 if row_content_name == content_name:
                     templates = []
                     
-                    # medibaプラットフォームの場合、D列（4列目）のコンテンツ名のみを使用
+                    # medibaプラットフォームの場合、D列を優先して使用（出力用）、検索時はC列またはD列
                     if target_column == 'mediba':
                         # D列（4列目）のコンテンツ名を取得
-                        mediba_content = ''
+                        mediba_d_content = ''
                         if len(row) > 3:
-                            mediba_content = str(row.iloc[3])  # D列
+                            mediba_d_content = str(row.iloc[3])  # D列
                         
-                        # D列が有効な値でない場合はC列を確認
-                        if not mediba_content or mediba_content == 'nan' or mediba_content == '':
-                            if len(row) > 2:
-                                mediba_content = str(row.iloc[2])  # C列
+                        # C列（3列目）のコンテンツ名を取得
+                        mediba_c_content = ''
+                        if len(row) > 2:
+                            mediba_c_content = str(row.iloc[2])  # C列
                         
-                        # それでも有効でない場合はデフォルト
-                        if not mediba_content or mediba_content == 'nan' or mediba_content == '':
-                            mediba_content = content_name
+                        # 出力用にはD列を優先、D列が空ならC列を使用
+                        output_content = ''
+                        if mediba_d_content and mediba_d_content != 'nan' and mediba_d_content.strip() != '':
+                            output_content = mediba_d_content
+                        elif mediba_c_content and mediba_c_content != 'nan' and mediba_c_content.strip() != '':
+                            output_content = mediba_c_content
+                        else:
+                            output_content = content_name  # デフォルト
                             
-                        self.logger.debug(f"mediba マッピング一致: {content_name} -> actual_content_name='{mediba_content}'")
+                        # 検索用候補リスト（C列またはD列）
+                        search_candidates = []
+                        if mediba_d_content and mediba_d_content != 'nan' and mediba_d_content.strip() != '':
+                            search_candidates.append(mediba_d_content)
+                        if mediba_c_content and mediba_c_content != 'nan' and mediba_c_content.strip() != '':
+                            search_candidates.append(mediba_c_content)
+                        if not search_candidates:
+                            search_candidates.append(content_name)  # デフォルト
+                            
+                        self.logger.debug(f"mediba マッピング一致: {content_name} -> output_content='{output_content}', search_candidates={search_candidates}")
                         
+                        # 出力用コンテンツ名で1つだけテンプレートを作成
                         # A列のテンプレートファイル
                         template_a = str(row.iloc[0])
                         if template_a and template_a != '' and not pd.isna(template_a):
                             template_file_a = template_a + '.xlsx' if not template_a.endswith(('.xlsx', '.xls')) else template_a
-                            templates.append((template_file_a, mediba_content))
+                            templates.append((template_file_a, output_content, search_candidates))
                         
                         # B列のテンプレートファイル（存在する場合）
                         if len(row) > 1 and pd.notna(row.iloc[1]) and str(row.iloc[1]) != '':
                             template_b = str(row.iloc[1])
                             template_file_b = template_b + '.xlsx' if not template_b.endswith(('.xlsx', '.xls')) else template_b
-                            templates.append((template_file_b, mediba_content))
+                            templates.append((template_file_b, output_content, search_candidates))
                     else:
                         # mediba以外のプラットフォームの場合
                         if platform_content and platform_content != 'nan' and platform_content.strip() != '':
@@ -341,19 +360,22 @@ class SalesDataLoader:
                             else:
                                 actual_content_name = content_name  # その他のプラットフォームはデフォルト値を使用
                         
-                        self.logger.debug(f"マッピング一致: {content_name} -> actual_content_name='{actual_content_name}'")
+                        # 検索候補は1つのみ
+                        search_candidates = [actual_content_name] if actual_content_name else [content_name]
+                        
+                        self.logger.debug(f"マッピング一致: {content_name} -> actual_content_name='{actual_content_name}', search_candidates={search_candidates}")
                         
                         # A列のテンプレートファイル
                         template_a = str(row.iloc[0])
                         if template_a and template_a != '' and not pd.isna(template_a):
                             template_file_a = template_a + '.xlsx' if not template_a.endswith(('.xlsx', '.xls')) else template_a
-                            templates.append((template_file_a, actual_content_name))
+                            templates.append((template_file_a, actual_content_name, search_candidates))
                         
                         # B列のテンプレートファイル（存在する場合）
                         if len(row) > 1 and pd.notna(row.iloc[1]) and str(row.iloc[1]) != '':
                             template_b = str(row.iloc[1])
                             template_file_b = template_b + '.xlsx' if not template_b.endswith(('.xlsx', '.xls')) else template_b
-                            templates.append((template_file_b, actual_content_name))
+                            templates.append((template_file_b, actual_content_name, search_candidates))
                     
                     if templates:
                         self.logger.info(f"テンプレートファイルが見つかりました: {content_name} ({platform}) -> {[t[0] for t in templates]}")
@@ -361,11 +383,11 @@ class SalesDataLoader:
             
             # マッチしない場合はデフォルト
             self.logger.warning(f"テンプレートファイルが見つかりません: {content_name} ({platform})")
-            return [("default_template.xlsx", content_name)]
+            return [("default_template.xlsx", content_name, [content_name])]
             
         except Exception as e:
             self.logger.error(f"テンプレートファイル取得エラー: {e}")
-            return [("default_template.xlsx", content_name)]
+            return [("default_template.xlsx", content_name, [content_name])]
     
     def _get_rate_info(self, template_file: str, rate_df: pd.DataFrame) -> Dict[str, any]:
         """レートデータから料率とメールアドレスを取得"""

@@ -13,7 +13,8 @@
       "Bash(if exist \"line-menu-2025-07.csv\" del \"line-menu-2025-07.csv\")",
       "Bash(tail:*)",
       "Bash(git add:*)",
-      "Bash(sed:*)"
+      "Bash(sed:*)",
+      "Bash(cut:*)"
     ],
     "deny": []
   }

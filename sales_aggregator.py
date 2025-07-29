@@ -365,6 +365,10 @@ class SalesAggregator:
             情報提供料_amount = 0
             details = []
             
+            # OWD_*コンテンツが含まれているかチェック
+            has_owd_content = any(str(b_value).startswith('OWD_') for b_value in b_groups.keys() if pd.notna(b_value))
+            platform_name = 'mediba' if has_owd_content else 'au'
+            
             for b_value, values in b_groups.items():
                 g_sum = sum(values['g_values'])
                 k_sum = sum(values['k_values'])
@@ -379,7 +383,7 @@ class SalesAggregator:
                 })
             
             return {
-                'platform': 'au',
+                'platform': platform_name,
                 'file': file_path.name,
                 '実績': round(実績_amount),
                 '情報提供料合計': round(情報提供料_amount),
@@ -614,6 +618,30 @@ class SalesAggregator:
             if result:
                 self.results.append(result)
     
+    def load_mediba_content_mapping(self):
+        """contents_maping.csvからmedibaコンテンツのマッピングを読み込み"""
+        try:
+            mapping_file = Path(r"C:\Users\OW\Dropbox\disk2とローカルの同期\溝口\miz\uriage\contents_maping.csv")
+            if not mapping_file.exists():
+                print("contents_maping.csvが見つかりません。medibaマッピングは適用されません。")
+                return set()
+            
+            mediba_contents = set()
+            df = pd.read_csv(mapping_file, encoding='utf-8-sig')
+            
+            # medibaコンテンツ（D列）を取得
+            if len(df.columns) > 2:  # D列が存在することを確認
+                mediba_column = df.iloc[:, 2]  # D列（0-indexed）
+                for content in mediba_column:
+                    if pd.notna(content) and str(content).startswith('OWD_'):
+                        mediba_contents.add(str(content))
+            
+            print(f"medibaコンテンツマッピング読み込み完了: {len(mediba_contents)}件")
+            return mediba_contents
+        except Exception as e:
+            print(f"medibaマッピング読み込みエラー: {e}")
+            return set()
+
     def export_to_csv(self, output_path):
         """結果をCSVファイルに出力（コンテンツごと）"""
         if not self.results:
@@ -648,6 +676,7 @@ class SalesAggregator:
                 for detail in result['details']:
                     実績 = round(detail.get('実績', 0))
                     情報提供料 = round(detail.get('情報提供料', 0))
+                    
                     writer.writerow([
                         result['platform'],
                         result['file'],
