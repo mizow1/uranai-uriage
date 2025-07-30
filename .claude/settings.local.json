@@ -14,7 +14,8 @@
       "Bash(tail:*)",
       "Bash(git add:*)",
       "Bash(sed:*)",
-      "Bash(cut:*)"
+      "Bash(cut:*)",
+      "Bash(powershell:*)"
     ],
     "deny": []
   }

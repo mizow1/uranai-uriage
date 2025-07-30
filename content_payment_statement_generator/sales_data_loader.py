@@ -475,14 +475,25 @@ class SalesDataLoader:
             # 検索対象のプラットフォーム名リストを取得
             search_platforms = platform_mapping.get(platform.lower(), [platform])
             
-            # コンテンツ名での検索（完全一致）
+            # コンテンツ名での検索（完全一致、スペース正規化対応）
             content_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
             
+            # スペース文字を正規化した検索名を作成
+            normalized_content_name = content_name.replace('　', ' ').replace(' ', ' ')
+            
             if 'コンテンツ' in merged_data.columns:
+                # 完全一致
                 content_mask |= (merged_data['コンテンツ'].astype(str) == content_name)
+                # スペース正規化での一致
+                normalized_data = merged_data['コンテンツ'].astype(str).str.replace('　', ' ').str.replace(' ', ' ')
+                content_mask |= (normalized_data == normalized_content_name)
                 self.logger.debug(f"コンテンツ列での検索: '{content_name}' -> {content_mask.sum()}件マッチ")
             if 'コンテンツ名' in merged_data.columns:
+                # 完全一致
                 content_mask |= (merged_data['コンテンツ名'].astype(str) == content_name)
+                # スペース正規化での一致
+                normalized_data = merged_data['コンテンツ名'].astype(str).str.replace('　', ' ').str.replace(' ', ' ')
+                content_mask |= (normalized_data == normalized_content_name)
                 self.logger.debug(f"コンテンツ名列での検索: '{content_name}' -> {content_mask.sum()}件マッチ")
             
             # プラットフォーム名での検索（完全一致）
@@ -514,12 +525,21 @@ class SalesDataLoader:
             # 完全一致しない場合は部分一致を試行
             content_partial_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
             
+            # スペース除去版も作成
+            content_name_no_space = content_name.replace('　', '').replace(' ', '')
+            
             if 'コンテンツ' in merged_data.columns:
                 content_partial_mask |= merged_data['コンテンツ'].astype(str).str.contains(content_name, na=False, case=False)
-                content_partial_mask |= merged_data['コンテンツ'].astype(str).str.contains(content_name.replace(' ', ''), na=False, case=False)
+                content_partial_mask |= merged_data['コンテンツ'].astype(str).str.contains(content_name_no_space, na=False, case=False)
+                # 全角・半角スペースを除去したデータでも検索
+                no_space_data = merged_data['コンテンツ'].astype(str).str.replace('　', '').str.replace(' ', '')
+                content_partial_mask |= no_space_data.str.contains(content_name_no_space, na=False, case=False)
             if 'コンテンツ名' in merged_data.columns:
                 content_partial_mask |= merged_data['コンテンツ名'].astype(str).str.contains(content_name, na=False, case=False)
-                content_partial_mask |= merged_data['コンテンツ名'].astype(str).str.contains(content_name.replace(' ', ''), na=False, case=False)
+                content_partial_mask |= merged_data['コンテンツ名'].astype(str).str.contains(content_name_no_space, na=False, case=False)
+                # 全角・半角スペースを除去したデータでも検索
+                no_space_data = merged_data['コンテンツ名'].astype(str).str.replace('　', '').str.replace(' ', '')
+                content_partial_mask |= no_space_data.str.contains(content_name_no_space, na=False, case=False)
             
             platform_partial_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
             

@@ -58,7 +58,7 @@ class ConfigManager(UnifiedConfigManager):
     
     def get_monthly_sales_file(self) -> str:
         """月別売上ファイルのパスを取得"""
-        return str(Path(self.base_paths['sales_data']) / self.files['monthly_sales'])
+        return str(Path(self.base_paths['current_dir']) / self.files['monthly_sales'])
     
     def get_line_contents_file(self, year: str, month: str) -> str:
         """LINE用コンテンツファイルのパスを取得"""
