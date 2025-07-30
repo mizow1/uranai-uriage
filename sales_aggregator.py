@@ -480,7 +480,7 @@ class SalesAggregator:
         return result
     
     def process_line_file(self, file_path: Path) -> ProcessingResult:
-        """LINE占いファイルを処理"""
+        """LINE占いファイルを処理 - 新仕様：「内訳」シートから「アイテム名」「RS対象額」「RS金額」を処理"""
         result = ProcessingResult(
             platform="line",
             file_name=file_path.name,
@@ -490,53 +490,110 @@ class SalesAggregator:
         start_time = datetime.now()
         
         try:
-            # ファイル拡張子に応じてデータを読み込み
-            if file_path.suffix.lower() == '.csv':
-                df = self.csv_handler.read_csv_with_encoding_detection(file_path)
-            elif file_path.suffix.lower() in ['.xlsx', '.xls']:
-                df = self.excel_handler.read_excel_with_password_handling(file_path)
-            else:
-                result.add_error(f"サポートされていないファイル形式: {file_path.suffix}")
+            # ファイル名にLINEを含むxlsファイルのみ処理
+            if 'line' not in file_path.name.lower() or file_path.suffix.lower() not in ['.xls', '.xlsx']:
+                result.add_error("LINEを含むxlsファイルではありません")
+                self.logger.warning(f"LINE占いファイル処理スキップ: {file_path.name}")
                 return result
+            
+            # パスワード保護を考慮してファイルを読み込み
+            passwords = self.config.get_processing_settings().get('excel_passwords', ['', 'password', '123456', '000000', 'admin', 'user'])
+            
+            try:
+                wb = openpyxl.load_workbook(file_path, data_only=True)
+            except Exception as e:
+                if "password" in str(e).lower() or "protected" in str(e).lower():
+                    wb = self._load_encrypted_workbook(file_path, passwords)
+                    if wb is None:
+                        result.add_error("パスワード保護解除に失敗")
+                        return result
+                else:
+                    result.add_error(f"ファイル読み込みエラー: {str(e)}")
+                    return result
             
             self.logger.log_file_operation("読み込み", file_path, True)
             
-            # 列数チェック（最低3列必要: コンテンツ名, 実績, 情報提供料）
-            if len(df.columns) < 3:
-                result.add_error(f"列数が不足: 必要3列以上、実際{len(df.columns)}列")
+            # 「内訳」シートを検索
+            breakdown_sheet = None
+            for sheet_name in wb.sheetnames:
+                if '内訳' in sheet_name:
+                    breakdown_sheet = wb[sheet_name]
+                    break
+            
+            if breakdown_sheet is None:
+                result.add_error("「内訳」シートが見つかりません")
                 return result
             
-            # コンテンツ名（A列）でグループ化してrevenue（C列）の合計を計算
-            service_name_column = df.iloc[:, 0]  # A列（コンテンツ名）
-            revenue_column = df.iloc[:, 2]  # C列（情報提供料）
+            # DataFrameに変換
+            df = pd.DataFrame(breakdown_sheet.values)
+            if df.empty or len(df) < 2:
+                result.add_error("「内訳」シートにデータがありません")
+                return result
             
-            # 数値に変換
-            revenue_column = pd.to_numeric(revenue_column, errors='coerce').fillna(0)
+            # 1行目をヘッダーとして使用
+            headers = df.iloc[0].astype(str).tolist()
+            df.columns = headers
+            df = df.drop(0).reset_index(drop=True)
             
-            service_groups = {}
-            for i, service_name in enumerate(service_name_column):
-                if pd.notna(service_name):
-                    if service_name not in service_groups:
-                        service_groups[service_name] = 0
-                    service_groups[service_name] += revenue_column.iloc[i]
+            # 必要な列を検索
+            item_name_col = None
+            rs_target_col = None
+            rs_amount_col = None
             
-            # 各サービスの計算
-            for service_name, revenue_sum in service_groups.items():
-                # B列（実績）も取得
-                performance_sum = 0
-                for i, name in enumerate(service_name_column):
-                    if pd.notna(name) and name == service_name:
-                        performance_value = df.iloc[i, 1]  # B列（実績）
-                        if pd.notna(performance_value):
-                            performance_sum += pd.to_numeric(performance_value, errors='coerce')
+            for i, header in enumerate(headers):
+                if 'アイテム名' in str(header):
+                    item_name_col = i
+                elif 'RS対象額' in str(header):
+                    rs_target_col = i
+                elif 'RS金額' in str(header):
+                    rs_amount_col = i
+            
+            if item_name_col is None:
+                result.add_error("「アイテム名」列が見つかりません")
+                return result
+            if rs_target_col is None:
+                result.add_error("「RS対象額」列が見つかりません")
+                return result
+            if rs_amount_col is None:
+                result.add_error("「RS金額」列が見つかりません")
+                return result
+            
+            # アイテム名でグループ化して集計
+            item_groups = {}
+            
+            for _, row in df.iterrows():
+                item_name = row.iloc[item_name_col]
+                rs_target = row.iloc[rs_target_col]
+                rs_amount = row.iloc[rs_amount_col]
                 
-                実績_sum = performance_sum  # B列の値を実績とする
-                情報提供料_sum = revenue_sum  # C列の値をそのまま情報提供料とする
+                if pd.notna(item_name):
+                    item_name = str(item_name).strip()
+                    if item_name not in item_groups:
+                        item_groups[item_name] = {'rs_target': 0, 'rs_amount': 0}
+                    
+                    # RS対象額を加算
+                    if pd.notna(rs_target):
+                        rs_target_numeric = pd.to_numeric(rs_target, errors='coerce')
+                        if pd.notna(rs_target_numeric):
+                            item_groups[item_name]['rs_target'] += rs_target_numeric
+                    
+                    # RS金額を加算
+                    if pd.notna(rs_amount):
+                        rs_amount_numeric = pd.to_numeric(rs_amount, errors='coerce')
+                        if pd.notna(rs_amount_numeric):
+                            item_groups[item_name]['rs_amount'] += rs_amount_numeric
+            
+            # 各アイテムの計算
+            for item_name, values in item_groups.items():
+                # RS対象額の合計を1.1で除算→「実績」
+                実績 = values['rs_target'] / 1.1 if values['rs_target'] > 0 else 0
+                # RS金額の合計を1.1で除算→「情報提供料」
+                情報提供料 = values['rs_amount'] / 1.1 if values['rs_amount'] > 0 else 0
                 
                 detail = ContentDetail(
-                    content_group=str(service_name),
-                    performance=round(実績_sum),
-                    information_fee=round(情報提供料_sum)
+                    content_group=item_name,
+                    performance=round(実績),
+                    information_fee=round(情報提供料)
                 )
                 result.add_detail(detail)
             
@@ -544,11 +601,11 @@ class SalesAggregator:
             result.calculate_totals()
             result.success = True
             result.metadata = {
-                'service_groups_count': len(service_groups),
-                'total_revenue': sum(service_groups.values())
+                'item_groups_count': len(item_groups),
+                'sheet_used': '内訳'
             }
             
-            self.logger.info(f"LINE処理完了: {len(service_groups)}サービスグループ")
+            self.logger.info(f"LINE処理完了（新仕様）: {len(item_groups)}アイテムグループ")
             
         except Exception as e:
             result.add_error(str(e))

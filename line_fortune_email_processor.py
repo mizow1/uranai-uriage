@@ -47,6 +47,163 @@ def extract_date_from_filename(filename):
     return ""
 
 
+def aggregate_all_service_data():
+    """全年月のline-menu-yyyy-mmファイルからservice_nameごとの合計を一括計算してline_contents_yyyy_mm.csvを作成する"""
+    try:
+        from line_contents_aggregator import LineContentsAggregator
+        import glob
+        
+        # 設定ファイルから保存場所を取得
+        config = Config()
+        
+        # ベースパスを取得
+        base_path = Path(config.get('base_path'))
+        
+        if not base_path.exists():
+            print(f"ベースパスが見つかりません: {base_path}")
+            return 1
+        
+        # yyyy/yyyymm/line パターンのディレクトリを検索
+        line_directories = []
+        year_pattern = base_path / "*" / "*" / "line"
+        
+        for line_dir in glob.glob(str(year_pattern)):
+            line_path = Path(line_dir)
+            if line_path.is_dir():
+                # パスから年月を抽出
+                parts = line_path.parts
+                if len(parts) >= 3:
+                    try:
+                        year_month_str = parts[-2]  # yyyymm部分
+                        year_str = parts[-3]        # yyyy部分
+                        
+                        # yyyymmフォーマットの検証
+                        if (len(year_month_str) == 6 and year_month_str.isdigit() and
+                            len(year_str) == 4 and year_str.isdigit()):
+                            year = int(year_str)
+                            month = int(year_month_str[4:6])
+                            
+                            # line-menu-yyyy-mm.csvファイルの存在確認
+                            menu_filename = f"line-menu-{year}-{month:02d}.csv"
+                            menu_file = line_path / menu_filename
+                            
+                            if menu_file.exists():
+                                line_directories.append({
+                                    'path': line_path,
+                                    'year': year,
+                                    'month': month,
+                                    'menu_file': menu_file,
+                                    'menu_filename': menu_filename
+                                })
+                    except (ValueError, IndexError):
+                        continue
+        
+        if not line_directories:
+            print("処理可能なline-menu-yyyy-mm.csvファイルが見つかりませんでした。")
+            return 1
+        
+        # 年月順でソート
+        line_directories.sort(key=lambda x: (x['year'], x['month']))
+        
+        print("\n" + "="*60)
+        print("全年月一括サービス別売上集計機能")
+        print("="*60)
+        print(f"見つかったline-menu-yyyy-mm.csvファイル: {len(line_directories)}個")
+        
+        for dir_info in line_directories:
+            print(f"  {dir_info['year']}-{dir_info['month']:02d}: {dir_info['menu_filename']}")
+        
+        # 実行確認
+        confirm = input(f"\n{len(line_directories)}個のファイルを一括でコンテンツ別集計しますか？ (y/N): ").strip().lower()
+        if confirm not in ['y', 'yes']:
+            print("処理を中止しました。")
+            return 0
+        
+        # 進捗表示のためのtqdmインポート
+        try:
+            from tqdm import tqdm
+        except ImportError:
+            # tqdmが利用できない場合のダミークラス
+            class tqdm:
+                def __init__(self, iterable=None, total=None, desc=None, **kwargs):
+                    self.iterable = iterable or []
+                    self.desc = desc
+                    self.current = 0
+                    self.total = total or len(self.iterable)
+                    if desc:
+                        print(f"{desc}: 開始")
+                
+                def __iter__(self):
+                    return iter(self.iterable)
+                
+                def __enter__(self):
+                    return self
+                
+                def __exit__(self, *args):
+                    if self.desc:
+                        print(f"{self.desc}: 完了")
+                
+                def set_description(self, desc):
+                    pass
+                
+                def update(self, n=1):
+                    self.current += n
+        
+        # LineContentsAggregatorの初期化
+        aggregator = LineContentsAggregator()
+        
+        success_count = 0
+        error_count = 0
+        
+        with tqdm(total=len(line_directories), desc="一括集計進捗", unit="ファイル") as pbar:
+            for dir_info in line_directories:
+                try:
+                    pbar.set_description(f"処理中: {dir_info['year']}-{dir_info['month']:02d}")
+                    
+                    # 出力ファイル名
+                    output_filename = f"line-contents-{dir_info['year']}-{dir_info['month']:02d}.csv"
+                    output_path = dir_info['path'] / output_filename
+                    
+                    # 既存ファイルがある場合は上書き
+                    if output_path.exists():
+                        print(f"\n  {output_filename} は既に存在します。上書きします。")
+                    
+                    # LineContentsAggregatorを使用して処理
+                    df = aggregator.process_line_menu_file(str(dir_info['menu_file']))
+                    
+                    if df.empty:
+                        print(f"\n  {dir_info['menu_filename']}: 集計可能なデータが見つかりませんでした。")
+                        continue
+                    
+                    # ファイルを保存
+                    if aggregator.save_contents_file(df, str(output_path)):
+                        success_count += 1
+                        print(f"\n  ✓ {output_filename} - コンテンツ数: {len(df)}, 総実績: {df['実績'].sum():,}円")
+                    else:
+                        error_count += 1
+                        print(f"\n  ✗ {output_filename}: ファイル保存に失敗しました。")
+                        
+                except Exception as e:
+                    error_count += 1
+                    print(f"\n  ✗ {dir_info['menu_filename']}: エラー - {e}")
+                finally:
+                    pbar.update(1)
+        
+        # 結果サマリー
+        print("\n" + "="*60)
+        print("一括集計完了")
+        print("="*60)
+        print(f"  処理対象ファイル数: {len(line_directories)}個")
+        print(f"  成功: {success_count}個")
+        print(f"  エラー: {error_count}個")
+        
+        return 0 if error_count == 0 else 1
+        
+    except Exception as e:
+        print(f"一括サービス別集計でエラーが発生しました: {e}")
+        return 1
+
+
 def aggregate_service_data(auto_mode=False, target_year=None, target_month=None):
     """line-menu-yyyy-mmファイルからservice_nameごとの合計を計算してline_contents_yyyy_mm.csvを作成する"""
     try:
@@ -356,6 +513,27 @@ def main():
         help="同フォルダのline-menu-yyyy-mm.csvファイルからservice_nameごとの合計を計算してline-contents-yyyy-mm.csvを作成"
     )
     
+    parser.add_argument(
+        "--year",
+        "-y",
+        type=int,
+        help="処理対象の年を指定 (例: 2025)"
+    )
+    
+    parser.add_argument(
+        "--month",
+        "-m",
+        type=int,
+        help="処理対象の月を指定 (例: 7)"
+    )
+    
+    parser.add_argument(
+        "--all",
+        "-a",
+        action="store_true",
+        help="全年月のline-menu-yyyy-mm.csvファイルを一括でコンテンツ別集計処理"
+    )
+    
     
     args = parser.parse_args()
     
@@ -379,7 +557,23 @@ def main():
     
     # サービス別集計機能
     if args.aggregate_services:
-        return aggregate_service_data()
+        # --allオプションが指定されている場合は全年月を一括処理
+        if args.all:
+            # --allと--year/--monthの併用をチェック
+            if args.year or args.month:
+                print("エラー: --allオプションは--year/-yや--month/-mと併用できません")
+                return 1
+            return aggregate_all_service_data()
+        
+        # 年月が指定されている場合は検証
+        if args.year and not (1900 <= args.year <= 2100):
+            print("エラー: 年は1900-2100の範囲で指定してください")
+            return 1
+        if args.month and not (1 <= args.month <= 12):
+            print("エラー: 月は1-12の範囲で指定してください")
+            return 1
+        
+        return aggregate_service_data(auto_mode=False, target_year=args.year, target_month=args.month)
     
     def get_date_input(prompt, default_date=None):
         """対話形式で日付を取得"""
