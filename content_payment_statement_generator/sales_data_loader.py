@@ -282,11 +282,10 @@ class SalesDataLoader:
         try:
             # プラットフォーム別の列名マッピング
             platform_column_map = {
-                'au': 'au',
+                'mediba': 'mediba',  # medibaは独立したプラットフォーム
                 'line': 'LINE', 
                 'satori': 'ameba',  # satoriプラットフォームはameba列を参照
                 'ameba': 'ameba',   # amebaプラットフォームはameba列を参照
-                'mediba': 'mediba',  # medibaは独立したプラットフォーム
                 'rakuten': '楽天',  # rakutenは楽天列を使用
                 '楽天': '楽天',
                 'excite': 'excite'
@@ -467,7 +466,6 @@ class SalesDataLoader:
                 'ameba': ['ameba', 'satori'],  # amebaはsatoriデータも含む
                 'satori': ['ameba', 'satori'], 
                 'mediba': ['mediba'],  # medibaは独立したプラットフォーム
-                'au': ['au'],
                 'line': ['line'],
                 'rakuten': ['rakuten', '楽天'],
                 '楽天': ['rakuten', '楽天'],

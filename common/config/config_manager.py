@@ -93,7 +93,7 @@ class ConfigManager:
             'line_path': year_month_path / 'line',
             'ameba_path': year_month_path,
             'rakuten_path': year_month_path,
-            'au_path': year_month_path,
+            'mediba_path': year_month_path,
             'excite_path': year_month_path
         }
     

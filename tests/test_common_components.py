@@ -65,7 +65,7 @@ class TestCommonComponents(unittest.TestCase):
         """Shift-JISエンコーディングのCSVファイル処理テスト"""
         # テストデータ作成
         test_data = pd.DataFrame({
-            'プラットフォーム': ['楽天', 'au', 'LINE'],
+            'プラットフォーム': ['楽天', 'mediba', 'LINE'],
             '実績': [1000, 2000, 3000],
             '情報提供料': [300, 600, 900]
         })

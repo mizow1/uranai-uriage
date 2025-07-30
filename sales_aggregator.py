@@ -65,7 +65,7 @@ class SalesAggregator:
         files_by_platform = {
             'ameba': [],
             'rakuten': [],
-            'au': [],
+            'mediba': [],
             'excite': [],
             'line': []
         }
@@ -84,7 +84,7 @@ class SalesAggregator:
                                 elif 'rcms' in filename:
                                     files_by_platform['rakuten'].append(file)
                                 elif 'salessummary' in filename:
-                                    files_by_platform['au'].append(file)
+                                    files_by_platform['mediba'].append(file)
                                 elif 'excite' in filename:
                                     files_by_platform['excite'].append(file)
                             # サブフォルダも検索（LINEファイル用）
@@ -302,9 +302,9 @@ class SalesAggregator:
         return result
     
     def process_au_file(self, file_path: Path) -> ProcessingResult:
-        """au占い（SalesSummary）ファイルを処理"""
+        """mediba占い（SalesSummary）ファイルを処理"""
         result = ProcessingResult(
-            platform="au",
+            platform="mediba",
             file_name=file_path.name,
             success=False
         )
@@ -326,7 +326,7 @@ class SalesAggregator:
             
             self.logger.log_file_operation("読み込み", file_path, True)
             
-            # プラットフォーム名決定（auファイルは全てmedibaとして扱う）
+            # プラットフォーム名決定（mediba占いとして統一処理）
             platform_name = "mediba"
             
             # 列数チェック
@@ -374,7 +374,7 @@ class SalesAggregator:
                 'platform_name': platform_name
             }
             
-            self.logger.info(f"au処理完了: {len(b_groups)}グループ")
+            self.logger.info(f"mediba処理完了: {len(b_groups)}グループ")
             
         except Exception as e:
             result.add_error(str(e))
@@ -585,7 +585,7 @@ class SalesAggregator:
                     result = self.process_ameba_file(file_path)
                 elif platform == 'rakuten':
                     result = self.process_rakuten_file(file_path)
-                elif platform == 'au':
+                elif platform == 'mediba':
                     result = self.process_au_file(file_path)
                 elif platform == 'excite':
                     result = self.process_excite_file(file_path)

@@ -156,7 +156,7 @@ class TestSalesAggregator(unittest.TestCase):
         self.assertEqual(hoge_detail.information_fee, 1813)  # 四捨五入
     
     def test_au_processor_with_sales_summary(self):
-        """auプロセッサーのSalesSummaryファイルテスト"""
+        """medibaプロセッサーのSalesSummaryファイルテスト"""
         # SalesSummary形式のテストデータ
         test_data = pd.DataFrame({
             'A': [0, 0, 0],
@@ -175,7 +175,7 @@ class TestSalesAggregator(unittest.TestCase):
         
         # 検証
         self.assertIsInstance(result, ProcessingResult)
-        self.assertEqual(result.platform, "au") 
+        self.assertEqual(result.platform, "mediba") 
         self.assertTrue(result.success)
         self.assertGreater(len(result.details), 0)
         

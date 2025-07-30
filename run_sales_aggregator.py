@@ -39,7 +39,7 @@ def main():
             print("以下のファイル名パターンを確認してください:")
             print("- ameba占い: '【株式会社アウトワード御中】satori実績_'を含むファイル")
             print("- 楽天占い: 'rcms'を含むファイル")
-            print("- au占い: 'salessummary'を含むファイル")
+            print("- mediba占い: 'salessummary'を含むファイル")
             print("- excite占い: 'excite'を含むファイル")
             print("- LINE占い: 'line'を含むファイル")
             return
