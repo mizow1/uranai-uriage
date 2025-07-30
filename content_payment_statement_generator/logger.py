@@ -63,7 +63,6 @@ class SystemLogger:
                 
             except Exception as e:
                 # ファイルハンドラー設定失敗時のフォールバック
-                import logging
                 fallback_logger = logging.getLogger(__name__)
                 fallback_logger.error(f"ログファイル設定エラー: {e}")
     

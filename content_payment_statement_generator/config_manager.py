@@ -1,32 +1,52 @@
 """
-設定管理モジュール
+設定管理モジュール - 統一ConfigManagerへの移行
 
-システム設定とファイルパスの管理を行います。
+このモジュールは非推奨です。代わりにcommon.ConfigManagerを使用してください。
 """
 
-import os
+# 統一ConfigManagerをインポート
+from common.config.config_manager import ConfigManager as UnifiedConfigManager
+import warnings
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional
-import logging
 
-
-class ConfigManager:
-    """システム設定とファイルパスの管理クラス"""
+# 後方互換性のためのラッパークラス
+class ConfigManager(UnifiedConfigManager):
+    """content_payment_statement_generator用ConfigManagerラッパー（非推奨）"""
     
     def __init__(self):
-        """設定管理クラスを初期化"""
-        self.base_paths = {
-            'sales_data': r'C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ISP支払通知書',
-            'template_dir': r'C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ロイヤリティ\コンテンツ関連支払明細書フォーマット',
-            'output_base': r'C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ロイヤリティ',
-            'current_dir': r'C:\Users\OW\Dropbox\disk2とローカルの同期\溝口\miz\uriage'
+        """統一ConfigManagerを初期化し、既存の設定を追加"""
+        warnings.warn(
+            "content_payment_statement_generator.config_manager.ConfigManagerは非推奨です。"
+            "common.ConfigManagerを直接使用してください。",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        
+        # 統一ConfigManagerを初期化
+        super().__init__()
+        
+        # 既存の設定を統一フォーマットで追加
+        legacy_config = {
+            'base_paths': {
+                'sales_data': r'C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ISP支払通知書',
+                'template_dir': r'C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ロイヤリティ\コンテンツ関連支払明細書フォーマット',
+                'output_base': r'C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ロイヤリティ',
+                'current_dir': r'C:\Users\OW\Dropbox\disk2とローカルの同期\溝口\miz\uriage'
+            },
+            'files': {
+                'monthly_sales': '月別ISP別コンテンツ別売上.csv',
+                'contents_mapping': 'contents_mapping.csv',
+                'rate_data': 'rate.csv'
+            }
         }
         
-        self.files = {
-            'monthly_sales': '月別ISP別コンテンツ別売上.csv',
-            'contents_mapping': 'contents_maping.csv',  # 実際のファイル名に合わせる
-            'rate_data': 'rate.csv'
-        }
+        self.update_config(legacy_config)
+        
+        # 後方互換性のためのプロパティ
+        self.base_paths = legacy_config['base_paths']
+        self.files = legacy_config['files']
         
         self._validate_paths()
         

@@ -184,6 +184,9 @@ class MainController:
                     agg['target_month'] = record.target_month
                     agg['rate'] = record.rate
                     agg['recipient_email'] = record.recipient_email
+                    self.logger.debug(f"集計キー初期化: {key} - 実績:{record.performance}, 情報提供料:{record.information_fee}")
+                else:
+                    self.logger.debug(f"集計キー追加: {key} - 実績:{record.performance} (累計:{agg['total_performance']}→{agg['total_performance'] + record.performance}), 情報提供料:{record.information_fee} (累計:{agg['total_information_fee']}→{agg['total_information_fee'] + record.information_fee})")
                 
                 # 実績と情報提供料を累積
                 agg['total_performance'] += record.performance

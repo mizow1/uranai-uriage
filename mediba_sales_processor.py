@@ -21,6 +21,7 @@ from common import (
     ContentDetail,
     ProcessingSummary
 )
+from common.utils.performance_optimizer import get_performance_optimizer
 
 class MedibaSalesProcessor:
     """mediba占い売上データ処理クラス"""
@@ -30,6 +31,7 @@ class MedibaSalesProcessor:
         self.error_handler = ErrorHandler(self.logger.logger)
         self.csv_handler = CSVHandler(self.logger.logger, self.error_handler)
         self.config = ConfigManager(logger=self.logger.logger)
+        self.performance_optimizer = get_performance_optimizer(self.logger.logger)
     
     def find_sales_summary_files(self):
         """SalesSummaryを含むCSVファイルを検索"""
@@ -60,6 +62,9 @@ class MedibaSalesProcessor:
         try:
             # CSVファイルを読み込み（統一ハンドラー使用）
             df = self.csv_handler.read_csv_with_encoding_detection(csv_file_path)
+            
+            # DataFrame最適化
+            df = self.performance_optimizer.optimize_dataframe_operations(df)
             
             self.logger.log_file_operation("読み込み", csv_file_path, True)
             self.logger.info(f"データ行数: {len(df)}")
@@ -171,14 +176,30 @@ class MedibaSalesProcessor:
         
         self.logger.log_file_list(files, "処理")
         
-        # 各ファイルを処理
-        results = []
-        for file_path in files:
-            self.logger.log_processing_progress(len(results) + 1, len(files), file_path.name)
+        # 並列処理を使用するかどうかを設定で決定
+        use_parallel = self.config.get('parallel_processing', False) and len(files) > 1
+        
+        if use_parallel:
+            # 並列処理
+            max_workers = min(4, len(files))  # 最大4スレッド
+            self.logger.info(f"並列処理モード: {max_workers}スレッド使用")
             
-            result = self.process_sales_data(file_path)
-            results.append(result)
-            summary.add_result(result)
+            results = self.performance_optimizer.parallel_process_files(
+                files, self.process_sales_data, max_workers
+            )
+        else:
+            # 順次処理
+            results = []
+            for file_path in files:
+                self.logger.log_processing_progress(len(results) + 1, len(files), file_path.name)
+                
+                result = self.process_sales_data(file_path)
+                results.append(result)
+        
+        # 結果をサマリーに追加
+        for result in results:
+            if result is not None:
+                summary.add_result(result)
             
             # 個別結果をログ出力
             if result.success:

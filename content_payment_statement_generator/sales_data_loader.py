@@ -228,6 +228,9 @@ class SalesDataLoader:
                             recipient_email=rate_info['email']
                         )
                         
+                        # デバッグ情報を追加
+                        self.logger.debug(f"SalesRecord作成: {output_content_name} ({platform}) - 実績:{record.performance}, 情報提供料:{record.information_fee}, テンプレート:{template_file}")
+                        
                         sales_records.append(record)
                 else:
                     # データが見つからない場合、C列（支払年月）に値があるかチェック
@@ -259,6 +262,9 @@ class SalesDataLoader:
                                 rate=rate_info['rate'],
                                 recipient_email=rate_info['email']
                             )
+                            
+                            # デバッグ情報を追加
+                            self.logger.debug(f"SalesRecord作成(0円): {output_content_name} ({platform}) - 実績:0, 情報提供料:0, テンプレート:{template_file}")
                             
                             sales_records.append(record)
                 
