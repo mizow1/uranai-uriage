@@ -42,6 +42,9 @@ def main():
             print("- mediba占い: 'salessummary'を含むファイル")
             print("- excite占い: 'excite'を含むファイル")
             print("- LINE占い: 'line'を含むファイル")
+            print("- docomo占い: 'bp40000746'を含むCSVファイル")
+            print("- au占い: 'cp02お支払い明細書.csv'を含むファイル")
+            print("- softbank占い: 'OID_PAY_9ATI'を含むPDFファイル")
             return
         
         # CSV出力（指定されたデータフォルダに出力）

@@ -67,7 +67,10 @@ class SalesAggregator:
             'rakuten': [],
             'mediba': [],
             'excite': [],
-            'line': []
+            'line': [],
+            'docomo': [],
+            'au': [],
+            'softbank': []
         }
         
         # 年フォルダ（4桁）内の月フォルダ（6桁）を検索
@@ -87,6 +90,13 @@ class SalesAggregator:
                                     files_by_platform['mediba'].append(file)
                                 elif 'excite' in filename:
                                     files_by_platform['excite'].append(file)
+                                elif 'bp40000746' in filename and filename.endswith('.csv'):
+                                    files_by_platform['docomo'].append(file)
+                                elif 'cp02お支払い明細書' in filename and filename.endswith('.pdf'):
+                                    files_by_platform['au'].append(file)
+                            # サブフォルダも検索（LINEファイル用）
+                                elif 'oid_pay_9ati' in filename and filename.endswith('.pdf'):
+                                    files_by_platform['softbank'].append(file)
                             # サブフォルダも検索（LINEファイル用）
                             elif file.is_dir():
                                 for subfile in file.iterdir():
@@ -94,6 +104,8 @@ class SalesAggregator:
                                         subfilename = subfile.name.lower()
                                         if subfilename.startswith('line-contents-') and (subfile.suffix.lower() in ['.xls', '.xlsx', '.csv']):
                                             files_by_platform['line'].append(subfile)
+                                        elif 'oid_pay_9ati' in subfilename and subfile.suffix.lower() == '.pdf':
+                                            files_by_platform['softbank'].append(subfile)
         
         return files_by_platform
     
@@ -538,6 +550,280 @@ class SalesAggregator:
         
         return result
     
+    def process_docomo_file(self, file_path: Path) -> ProcessingResult:
+        """docomo占いファイルを処理"""
+        result = ProcessingResult(
+            platform="docomo",
+            file_name=file_path.name,
+            success=False
+        )
+        
+        start_time = datetime.now()
+        
+        try:
+            # bp40000746を含むCSVファイルのみ処理
+            if 'bp40000746' not in file_path.name:
+                result.add_error("bp40000746を含むファイルではありません")
+                self.logger.warning(f"docomo占いファイル処理スキップ: {file_path.name}")
+                return result
+            
+            # CSVファイルを読み込み（5行目以降を使用）
+            df = self.csv_handler.read_csv_with_encoding_detection(
+                file_path, skiprows=4  # 5行目以降なので4行スキップ
+            )
+            
+            if df is None or df.empty:
+                result.add_error("ファイルの読み込みに失敗またはデータが空です")
+                return result
+            
+            self.logger.log_file_operation("読み込み", file_path, True)
+            
+            # 列数チェック（R列=18列目、AK列=37列目、DK列=115列目が必要）
+            if len(df.columns) < 115:
+                result.add_error(f"列数が不足: 必要115列以上、実際{len(df.columns)}列")
+                return result
+            
+            # R列（コンテンツ名）、AK列（実績）、DK列（情報提供料）を取得
+            r_column = df.iloc[:, 17]  # R列（18番目、0ベースで17）
+            ak_column = df.iloc[:, 36]  # AK列（37番目、0ベースで36）
+            dk_column = df.iloc[:, 114]  # DK列（115番目、0ベースで114）
+            
+            # 数値に変換（AK列とDK列）
+            ak_column = pd.to_numeric(ak_column, errors='coerce').fillna(0)
+            dk_column = pd.to_numeric(dk_column, errors='coerce').fillna(0)
+            
+            # コンテンツ名でグループ化
+            content_groups = {}
+            for i, content_name in enumerate(r_column):
+                if pd.notna(content_name) and str(content_name).strip():
+                    content_name = str(content_name).strip()
+                    if content_name not in content_groups:
+                        content_groups[content_name] = {'ak_values': [], 'dk_values': []}
+                    content_groups[content_name]['ak_values'].append(ak_column.iloc[i])
+                    content_groups[content_name]['dk_values'].append(dk_column.iloc[i])
+            
+            # 各コンテンツの計算
+            for content_name, values in content_groups.items():
+                ak_sum = sum(values['ak_values'])
+                dk_sum = sum(values['dk_values'])
+                
+                # AK列を1.1で除算したものが「実績」
+                実績_sum = ak_sum / 1.1 if ak_sum > 0 else 0
+                # DK列を1.1で除算したものが「情報提供料」
+                情報提供料_sum = dk_sum / 1.1 if dk_sum > 0 else 0
+                
+                detail = ContentDetail(
+                    content_group=content_name,
+                    performance=round(実績_sum),
+                    information_fee=round(情報提供料_sum)
+                )
+                result.add_detail(detail)
+            
+            # 合計を計算
+            result.calculate_totals()
+            result.success = True
+            result.metadata = {
+                'content_groups_count': len(content_groups),
+                'total_rows': len(df)
+            }
+            
+            self.logger.info(f"docomo処理完了: {len(content_groups)}コンテンツグループ")
+            
+        except Exception as e:
+            result.add_error(str(e))
+            self.error_handler.handle_file_processing_error(e, file_path)
+        
+        finally:
+            end_time = datetime.now()
+            result.processing_time = (end_time - start_time).total_seconds()
+        
+        return result
+    
+    def process_au_new_file(self, file_path: Path) -> ProcessingResult:
+        """au占いファイルを処理（新仕様）"""
+        result = ProcessingResult(
+            platform="au",
+            file_name=file_path.name,
+            success=False
+        )
+        
+        start_time = datetime.now()
+        
+        try:
+            # cp02お支払い明細書を含むPDFファイルのみ処理
+            if 'cp02お支払い明細書' not in file_path.name or file_path.suffix.lower() != '.pdf':
+                result.add_error("cp02お支払い明細書PDFファイルではありません")
+                self.logger.warning(f"au占いファイル処理スキップ: {file_path.name}")
+                return result
+            
+            # PDFファイルからテキストを抽出
+            try:
+                import PyPDF2
+                import re
+                
+                text_content = ""
+                with open(file_path, 'rb') as pdf_file:
+                    pdf_reader = PyPDF2.PdfReader(pdf_file)
+                    for page in pdf_reader.pages:
+                        text_content += page.extract_text()
+                
+            except ImportError:
+                result.add_error("PyPDF2が必要です。pip install PyPDF2でインストールしてください")
+                return result
+            except Exception as e:
+                result.add_error(f"PDF読み込みエラー: {str(e)}")
+                return result
+            
+            self.logger.log_file_operation("読み込み", file_path, True)
+            
+            # 金額を抽出（auファイルの場合は合計金額を抽出）
+            amount_pattern = r'[合計金額|金額|合計][:：\s]*([\d,]+)'
+            
+            amounts = re.findall(amount_pattern, text_content)
+            
+            if not amounts:
+                result.add_error("金額が見つかりません")
+                return result
+            
+            # 数値に変換（カンマを除去）
+            total_amount = 0
+            for amount_str in amounts:
+                amount_numeric = float(amount_str.replace(',', ''))
+                total_amount += amount_numeric
+            
+            # 合計金額を1.1で除算した値が「実績」
+            実績 = total_amount / 1.1
+            # 実績の40%が「情報提供料」（auファイルの仕様に基づく）
+            情報提供料 = 実績 * 0.4
+            
+            detail = ContentDetail(
+                content_group="au占い",
+                performance=round(実績),
+                information_fee=round(情報提供料)
+            )
+            result.add_detail(detail)
+            
+            # 合計を計算
+            result.calculate_totals()
+            result.success = True
+            result.metadata = {
+                'total_amount': total_amount,
+                'amounts_found': len(amounts),
+                'calculated_performance': round(実績),
+                'calculated_information_fee': round(情報提供料)
+            }
+            
+            self.logger.info(f"au処理完了: 実績={round(実績)}, 情報提供料={round(情報提供料)}")
+            
+        except Exception as e:
+            result.add_error(str(e))
+            self.error_handler.handle_file_processing_error(e, file_path)
+        
+        finally:
+            end_time = datetime.now()
+            result.processing_time = (end_time - start_time).total_seconds()
+        
+        return result
+    
+    def process_softbank_file(self, file_path: Path) -> ProcessingResult:
+        """softbank占いファイルを処理（PDF）"""
+        result = ProcessingResult(
+            platform="softbank",
+            file_name=file_path.name,
+            success=False
+        )
+        
+        start_time = datetime.now()
+        
+        try:
+            # OID_PAY_9ATIを含むPDFファイルのみ処理
+            if 'oid_pay_9ati' not in file_path.name.lower() or file_path.suffix.lower() != '.pdf':
+                result.add_error("OID_PAY_9ATIを含むPDFファイルではありません")
+                self.logger.warning(f"softbank占いファイル処理スキップ: {file_path.name}")
+                return result
+            
+            # PDFファイルからテキストを抽出
+            try:
+                import PyPDF2
+                import re
+                
+                text_content = ""
+                with open(file_path, 'rb') as pdf_file:
+                    pdf_reader = PyPDF2.PdfReader(pdf_file)
+                    for page in pdf_reader.pages:
+                        text_content += page.extract_text()
+                
+            except ImportError:
+                result.add_error("PyPDF2が必要です。pip install PyPDF2でインストールしてください")
+                return result
+            except Exception as e:
+                result.add_error(f"PDF読み込みエラー: {str(e)}")
+                return result
+            
+            self.logger.log_file_operation("読み込み", file_path, True)
+            
+            # 「合計金額」と「お支払い金額」を抽出
+            total_amount_pattern = r'合計金額[:\s]*([\d,]+)'
+            payment_amount_pattern = r'お支払い金額[:\s]*([\d,]+)'
+            
+            total_amounts = re.findall(total_amount_pattern, text_content)
+            payment_amounts = re.findall(payment_amount_pattern, text_content)
+            
+            if not total_amounts:
+                result.add_error("合計金額が見つかりません")
+                return result
+            
+            if not payment_amounts:
+                result.add_error("お支払い金額が見つかりません")
+                return result
+            
+            # 数値に変換（カンマを除去）
+            total_sum = 0
+            for amount_str in total_amounts:
+                amount_numeric = float(amount_str.replace(',', ''))
+                total_sum += amount_numeric
+            
+            payment_sum = 0
+            for amount_str in payment_amounts:
+                amount_numeric = float(amount_str.replace(',', ''))
+                payment_sum += amount_numeric
+            
+            # 「合計金額」の合計に1.1を乗算した値が「実績」
+            実績 = total_sum * 1.1
+            # 「お支払い金額」から1.1を除算したものが「情報提供料」
+            情報提供料 = payment_sum / 1.1
+            
+            detail = ContentDetail(
+                content_group="softbank占い",
+                performance=round(実績),
+                information_fee=round(情報提供料)
+            )
+            result.add_detail(detail)
+            
+            # 合計を計算
+            result.calculate_totals()
+            result.success = True
+            result.metadata = {
+                'total_amounts_found': len(total_amounts),
+                'payment_amounts_found': len(payment_amounts),
+                'total_sum': total_sum,
+                'payment_sum': payment_sum,
+                'calculated_performance': round(実績),
+                'calculated_information_fee': round(情報提供料)
+            }
+            
+            self.logger.info(f"softbank処理完了: 実績={round(実績)}, 情報提供料={round(情報提供料)}")
+            
+        except Exception as e:
+            result.add_error(str(e))
+            self.error_handler.handle_file_processing_error(e, file_path)
+        
+        finally:
+            end_time = datetime.now()
+            result.processing_time = (end_time - start_time).total_seconds()
+        
+        return result
+    
     def _extract_year_month_from_path(self, file_path: Path) -> str:
         """ファイルのパスから年月を抽出（YYYYMM形式）"""
         try:
@@ -591,6 +877,12 @@ class SalesAggregator:
                     result = self.process_excite_file(file_path)
                 elif platform == 'line':
                     result = self.process_line_file(file_path)
+                elif platform == 'docomo':
+                    result = self.process_docomo_file(file_path)
+                elif platform == 'au':
+                    result = self.process_au_new_file(file_path)
+                elif platform == 'softbank':
+                    result = self.process_softbank_file(file_path)
                 else:
                     self.logger.warning(f"未対応プラットフォーム: {platform}")
                     continue
