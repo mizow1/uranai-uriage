@@ -62,7 +62,10 @@ class SystemLogger:
                 root_logger.addHandler(file_handler)
                 
             except Exception as e:
-                print(f"ログファイル設定エラー: {e}")
+                # ファイルハンドラー設定失敗時のフォールバック
+                import logging
+                fallback_logger = logging.getLogger(__name__)
+                fallback_logger.error(f"ログファイル設定エラー: {e}")
     
     def get_logger(self, name: str) -> logging.Logger:
         """指定された名前のロガーを取得"""

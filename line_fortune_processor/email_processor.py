@@ -22,8 +22,9 @@ except ImportError:
             self.total = total or 0
             self.desc = desc
             self.current = 0
+            self.logger = logging.getLogger(__name__)
             if desc:
-                print(f"{desc}: 開始")
+                self.logger.info(f"{desc}: 開始")
         
         def __iter__(self):
             return iter(self.iterable)
@@ -33,17 +34,17 @@ except ImportError:
         
         def __exit__(self, *args):
             if self.desc:
-                print(f"{self.desc}: 完了")
+                self.logger.info(f"{self.desc}: 完了")
         
         def update(self, n=1):
             self.current += n
             if self.desc and self.total > 0:
                 progress = (self.current / self.total) * 100
-                print(f"{self.desc}: {self.current}/{self.total} ({progress:.1f}%)")
+                self.logger.info(f"{self.desc}: {self.current}/{self.total} ({progress:.1f}%)")
         
         def set_description(self, desc):
             self.desc = desc
-            print(f"{desc}")
+            self.logger.info(f"{desc}")
 
 from .error_handler import retry_on_error, handle_errors, ErrorHandler, RetryableError, FatalError, ErrorType
 from .constants import MailConstants, ErrorConstants

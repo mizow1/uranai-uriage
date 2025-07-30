@@ -9,6 +9,7 @@ line-contents-yyyy-mmファイルとして出力する
 import pandas as pd
 import argparse
 import os
+import logging
 from pathlib import Path
 from datetime import datetime
 import sys
@@ -21,6 +22,14 @@ class LineContentsAggregator:
         self.processed_files = []
         self.errors = []
         self.reiwa_mapping = {}
+        self.logger = logging.getLogger(self.__class__.__name__)
+        
+        # ログ設定（未設定の場合）
+        if not self.logger.handlers:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
         
         # デフォルトのマッピングファイルパス
         if mapping_file_path is None:
@@ -250,7 +259,7 @@ class LineContentsAggregator:
                 menu_file = dir_path / menu_pattern
                 
                 if menu_file.exists():
-                    print(f"処理中: {menu_file}")
+                    self.logger.info(f"処理中: {menu_file}")
                     
                     # ファイルを処理
                     df = self.process_line_menu_file(str(menu_file))
@@ -265,20 +274,19 @@ class LineContentsAggregator:
                             success_count += 1
                         
                         # 結果を表示
-                        print(f"コンテンツ数: {len(df)}")
-                        print(f"総実績: {df['実績'].sum():,}円")
-                        print(f"総情報提供料: {df['情報提供料'].sum():,}円")
-                        print()
+                        self.logger.info(f"コンテンツ数: {len(df)}")
+                        self.logger.info(f"総実績: {df['実績'].sum():,}円")
+                        self.logger.info(f"総情報提供料: {df['情報提供料'].sum():,}円")
                     
                 else:
-                    print(f"line-menuファイルが見つかりません: {menu_file}")
+                    self.logger.warning(f"line-menuファイルが見つかりません: {menu_file}")
             
-            print(f"処理完了: {success_count}件のファイルを処理しました")
+            self.logger.info(f"処理完了: {success_count}件のファイルを処理しました")
             
             if self.errors:
-                print(f"エラー: {len(self.errors)}件")
+                self.logger.error(f"エラー: {len(self.errors)}件")
                 for error in self.errors:
-                    print(f"  {error}")
+                    self.logger.error(f"  {error}")
             
             return success_count > 0
             
@@ -298,6 +306,14 @@ class LineContentsAggregator:
 
 def main():
     """メイン関数"""
+    # ログ設定
+    logger = logging.getLogger(__name__)
+    if not logger.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+    
     parser = argparse.ArgumentParser(
         description="LINE Contents Aggregator - コンテンツ売上集計ツール"
     )
@@ -335,10 +351,10 @@ def main():
         if args.file:
             # 単一ファイルを処理
             if not os.path.exists(args.file):
-                print(f"ファイルが存在しません: {args.file}")
+                logger.error(f"ファイルが存在しません: {args.file}")
                 return 1
             
-            print(f"ファイル処理中: {args.file}")
+            logger.info(f"ファイル処理中: {args.file}")
             df = aggregator.process_line_menu_file(args.file)
             
             if not df.empty:
@@ -347,37 +363,37 @@ def main():
                 output_path = file_path.parent / f"line-contents-{datetime.now().strftime('%Y-%m')}.csv"
                 
                 if aggregator.save_contents_file(df, str(output_path)):
-                    print(f"コンテンツ数: {len(df)}")
-                    print(f"総実績: {df['実績'].sum():,}円")
-                    print(f"総情報提供料: {df['情報提供料'].sum():,}円")
+                    logger.info(f"コンテンツ数: {len(df)}")
+                    logger.info(f"総実績: {df['実績'].sum():,}円")
+                    logger.info(f"総情報提供料: {df['情報提供料'].sum():,}円")
                 else:
-                    print("ファイル保存に失敗しました")
+                    logger.error("ファイル保存に失敗しました")
                     return 1
             else:
-                print("処理可能なデータがありませんでした")
+                logger.warning("処理可能なデータがありませんでした")
                 return 1
         
         else:
             # ディレクトリを処理
             success = aggregator.process_directory(args.base_path, args.year, args.month)
             if not success:
-                print("処理に失敗しました")
+                logger.error("処理に失敗しました")
                 return 1
         
         # 統計情報を表示
         stats = aggregator.get_stats()
-        print(f"\n=== 処理統計 ===")
-        print(f"処理ファイル数: {stats['processed_files']}")
-        print(f"エラー数: {stats['errors']}")
+        logger.info(f"\n=== 処理統計 ===")
+        logger.info(f"処理ファイル数: {stats['processed_files']}")
+        logger.info(f"エラー数: {stats['errors']}")
         
         return 0
         
     except KeyboardInterrupt:
-        print("\nユーザーによって処理が中断されました")
+        logger.info("\nユーザーによって処理が中断されました")
         return 1
         
     except Exception as e:
-        print(f"予期しないエラーが発生しました: {e}")
+        logger.error(f"予期しないエラーが発生しました: {e}")
         return 1
 
 

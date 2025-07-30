@@ -124,7 +124,10 @@ class Logger:
             self.logger.info(f"ログ記録を初期化しました: {log_path}")
             
         except Exception as e:
-            print(f"ログ記録の初期化に失敗しました: {e}")
+            # ログ初期化失敗時のフォールバック
+            import logging
+            fallback_logger = logging.getLogger(__name__)
+            fallback_logger.error(f"ログ記録の初期化に失敗しました: {e}")
             # フォールバックとして基本的なログ設定を行う
             logging.basicConfig(
                 level=logging.INFO,
