@@ -379,7 +379,7 @@ class SalesAggregator:
                 g_sum = sum(values['g_values'])
                 k_sum = sum(values['k_values'])
                 実績_sum = g_sum  # G列の値
-                情報提供料_sum = ((g_sum * 0.4) - k_sum) * 1.1  # G列の40%からK列を引いた値に1.1を乗算
+                情報提供料_sum = (g_sum * 0.4) - k_sum  # G列の40%からK列を引いた値
                 実績_amount += 実績_sum
                 情報提供料_amount += 情報提供料_sum
                 details.append({
