@@ -444,23 +444,81 @@ class SalesAggregator:
                 result.add_error("数値列が見つかりません")
                 return result
             
-            # exciteファイル固有の処理ロジック
-            # 基本的な合計計算（具体的な仕様が不明なため簡単な処理）
-            total_amount = 0
-            for col in numeric_cols:
-                column_sum = df[col].sum()
-                if column_sum > 0:
-                    total_amount += column_sum
+            # exciteファイル固有の処理ロジック - コンテンツ別処理に変更
+            # コンテンツ名列を検索（一般的な列名を検索）
+            content_name_col = None
+            possible_content_names = ['コンテンツ名', 'コンテンツ', 'サービス名', 'サービス', 'アプリ名', 'アプリ', '商品名', '商品']
             
-            # 基本的な情報提供料計算（30%とする）
-            information_fee = total_amount * 0.3
+            for col_name in df.columns:
+                col_name_str = str(col_name).strip()
+                if any(keyword in col_name_str for keyword in possible_content_names):
+                    content_name_col = col_name
+                    break
             
-            detail = ContentDetail(
-                content_group="excite_total",
-                performance=round(total_amount),
-                information_fee=round(information_fee)
-            )
-            result.add_detail(detail)
+            if content_name_col is None:
+                # コンテンツ名列が見つからない場合は、最初の非数値列を使用
+                text_cols = df.select_dtypes(include=['object', 'string']).columns
+                if len(text_cols) > 0:
+                    content_name_col = text_cols[0]
+                    self.logger.warning(f"コンテンツ名列が特定できないため、{content_name_col}列を使用します")
+                else:
+                    # それでも見つからない場合は従来通り一括処理
+                    self.logger.warning("コンテンツ名列が見つからないため、一括処理を行います")
+                    total_amount = 0
+                    for col in numeric_cols:
+                        column_sum = df[col].sum()
+                        if column_sum > 0:
+                            total_amount += column_sum
+                    
+                    information_fee = total_amount * 0.3
+                    
+                    detail = ContentDetail(
+                        content_group="excite_total",
+                        performance=round(total_amount),
+                        information_fee=round(information_fee)
+                    )
+                    result.add_detail(detail)
+            else:
+                # コンテンツ名列が見つかった場合、コンテンツ別に処理
+                self.logger.info(f"exciteコンテンツ名列として {content_name_col} を使用")
+                
+                # コンテンツ名でグループ化
+                content_groups = {}
+                
+                for _, row in df.iterrows():
+                    content_name = row[content_name_col]
+                    if pd.notna(content_name) and str(content_name).strip():
+                        content_name = str(content_name).strip()
+                        if content_name not in content_groups:
+                            content_groups[content_name] = []
+                        
+                        # 同じ行の数値列の値を集計
+                        row_total = 0
+                        for col in numeric_cols:
+                            value = pd.to_numeric(row[col], errors='coerce')
+                            if pd.notna(value) and value > 0:
+                                row_total += value
+                        
+                        if row_total > 0:
+                            content_groups[content_name].append(row_total)
+                
+                # 各コンテンツの計算結果を追加
+                for content_name, amounts in content_groups.items():
+                    if amounts:  # 空でない場合のみ処理
+                        total_amount = sum(amounts)
+                        information_fee = total_amount * 0.3
+                        
+                        detail = ContentDetail(
+                            content_group=content_name,
+                            performance=round(total_amount),
+                            information_fee=round(information_fee)
+                        )
+                        result.add_detail(detail)
+                
+                if not content_groups:
+                    # コンテンツが見つからない場合はエラー
+                    result.add_error("有効なコンテンツデータが見つかりません")
+                    return result
             
             # 合計を計算
             result.calculate_totals()
@@ -702,18 +760,18 @@ class SalesAggregator:
             
             self.logger.log_file_operation("読み込み", file_path, True)
             
-            # 列数チェック（R列=18列目、AK列=37列目、DK列=115列目が必要）
+            # 列数チェック（R列=18列目、BI列=61列目、DK列=115列目が必要）
             if len(df.columns) < 115:
                 result.add_error(f"列数が不足: 必要115列以上、実際{len(df.columns)}列")
                 return result
             
-            # R列（コンテンツ名）、AK列（実績）、DK列（情報提供料）を取得
+            # R列（コンテンツ名）、BI列（実績）、DK列（情報提供料）を取得
             r_column = df.iloc[:, 17]  # R列（18番目、0ベースで17）
-            ak_column = df.iloc[:, 36]  # AK列（37番目、0ベースで36）
+            bi_column = df.iloc[:, 60]  # BI列（61番目、0ベースで60）
             dk_column = df.iloc[:, 114]  # DK列（115番目、0ベースで114）
             
-            # 数値に変換（AK列とDK列）
-            ak_column = pd.to_numeric(ak_column, errors='coerce').fillna(0)
+            # 数値に変換（BI列とDK列）
+            bi_column = pd.to_numeric(bi_column, errors='coerce').fillna(0)
             dk_column = pd.to_numeric(dk_column, errors='coerce').fillna(0)
             
             # コンテンツ名でグループ化
@@ -722,8 +780,8 @@ class SalesAggregator:
                 if pd.notna(content_name) and str(content_name).strip():
                     content_name = str(content_name).strip()
                     if content_name not in content_groups:
-                        content_groups[content_name] = {'ak_values': [], 'dk_values': []}
-                    content_groups[content_name]['ak_values'].append(ak_column.iloc[i])
+                        content_groups[content_name] = {'bi_values': [], 'dk_values': []}
+                    content_groups[content_name]['bi_values'].append(bi_column.iloc[i])
                     content_groups[content_name]['dk_values'].append(dk_column.iloc[i])
             
             # KEIKOソウルメイト占術の統合処理
@@ -740,19 +798,19 @@ class SalesAggregator:
             
             # KEIKOソウルメイト占術関連の統合処理
             if keiko_related_groups:
-                total_ak_values = []
+                total_bi_values = []
                 total_dk_values = []
                 
                 for content_name, values in keiko_related_groups.items():
-                    total_ak_values.extend(values['ak_values'])
+                    total_bi_values.extend(values['bi_values'])
                     total_dk_values.extend(values['dk_values'])
                     self.logger.info(f"KEIKO統合対象: {content_name}")
                 
-                ak_sum = sum(total_ak_values)
+                bi_sum = sum(total_bi_values)
                 dk_sum = sum(total_dk_values)
                 
-                # AK列を1.1で除算したものが「実績」
-                実績_sum = ak_sum / 1.1 if ak_sum > 0 else 0
+                # BI列を1.1で除算したものが「実績」
+                実績_sum = bi_sum / 1.1 if bi_sum > 0 else 0
                 # DK列を1.1で除算したものが「情報提供料」
                 情報提供料_sum = dk_sum / 1.1 if dk_sum > 0 else 0
                 
@@ -767,11 +825,11 @@ class SalesAggregator:
             
             # その他のコンテンツの処理
             for content_name, values in other_groups.items():
-                ak_sum = sum(values['ak_values'])
+                bi_sum = sum(values['bi_values'])
                 dk_sum = sum(values['dk_values'])
                 
-                # AK列を1.1で除算したものが「実績」
-                実績_sum = ak_sum / 1.1 if ak_sum > 0 else 0
+                # BI列を1.1で除算したものが「実績」
+                実績_sum = bi_sum / 1.1 if bi_sum > 0 else 0
                 # DK列を1.1で除算したものが「情報提供料」
                 情報提供料_sum = dk_sum / 1.1 if dk_sum > 0 else 0
                 
