@@ -681,7 +681,9 @@ class SalesAggregator:
             if file_path.suffix.lower() == '.csv':
                 # CSVファイルを読み込み（5行目以降を使用）
                 df = self.csv_handler.read_csv_with_encoding_detection(
-                    file_path, skiprows=3  # 5行目以降を含めるため3行スキップに修正
+                    file_path,
+                    skiprows=4,      # 先頭4行をスキップし5行目以降を読み込み対象
+                    header=None      # 5行目をデータ行として扱う（ヘッダーなし）
                 )
             elif file_path.suffix.lower() == '.pdf':
                 # PDFファイルの場合はスキップ（CSVのみ処理）
