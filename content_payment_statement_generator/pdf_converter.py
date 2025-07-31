@@ -142,20 +142,14 @@ class PDFConverter:
             return False
     
     def convert_and_validate(self, excel_path: str) -> Optional[str]:
-        """Excel to PDF変換と検証を実行"""
+        """Excel to PDF変換を実行"""
         try:
             # PDF変換を実行
             pdf_path = self.convert_excel_to_pdf_com(excel_path)
-            
-            # PDF出力を検証
-            if self.validate_pdf_output(pdf_path):
-                return pdf_path
-            else:
-                self.logger.error("PDF変換は完了しましたが、検証に失敗しました")
-                return None
+            return pdf_path
                 
         except Exception as e:
-            self.logger.error(f"PDF変換・検証エラー: {e}")
+            self.logger.error(f"PDF変換エラー: {e}")
             return None
     
     def cleanup_temp_files(self, directory: str, pattern: str = "~$*.tmp") -> None:
