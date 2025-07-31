@@ -329,7 +329,7 @@ class SalesDataLoader:
                         elif mediba_c_content and mediba_c_content != 'nan' and mediba_c_content.strip() != '':
                             output_content = mediba_c_content
                         else:
-                            output_content = content_name  # デフォルト
+                            output_content = ''  # medibaで両方の列が空の場合は空文字（コンテンツ存在しない）
                             
                         # 検索用候補リスト（C列またはD列）
                         search_candidates = []
@@ -338,7 +338,7 @@ class SalesDataLoader:
                         if mediba_c_content and mediba_c_content != 'nan' and mediba_c_content.strip() != '':
                             search_candidates.append(mediba_c_content)
                         if not search_candidates:
-                            search_candidates.append(content_name)  # デフォルト
+                            search_candidates.append('')  # medibaで両方の列が空の場合は空文字で検索（マッチしない）
                             
                         self.logger.debug(f"mediba マッピング一致: {content_name} -> output_content='{output_content}', search_candidates={search_candidates}")
                         
@@ -360,7 +360,7 @@ class SalesDataLoader:
                             actual_content_name = str(platform_content)
                         else:
                             # プラットフォーム列が空欄の場合は、そのプラットフォームでのコンテンツは存在しないものとして空文字を設定
-                            if target_column.lower() in ['line', '楽天', 'excite', 'ameba']:
+                            if target_column.lower() in ['line', '楽天', 'excite', 'ameba', 'mediba']:
                                 actual_content_name = ''  # 空文字で明示的に存在しないことを示す
                             else:
                                 actual_content_name = content_name  # その他のプラットフォームはデフォルト値を使用

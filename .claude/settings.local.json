@@ -15,7 +15,13 @@
       "Bash(git add:*)",
       "Bash(sed:*)",
       "Bash(cut:*)",
-      "Bash(powershell:*)"
+      "Bash(powershell:*)",
+      "mcp__serena__check_onboarding_performed",
+      "mcp__serena__restart_language_server",
+      "mcp__serena__onboarding",
+      "mcp__serena__list_dir",
+      "mcp__serena__get_current_config",
+      "mcp__serena__write_memory"
     ],
     "deny": []
   }
