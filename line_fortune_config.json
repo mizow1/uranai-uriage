@@ -2,15 +2,15 @@
   "email": {
     "server": "imap.gmail.com",
     "port": 993,
-    "username": "mizoguchi@outward.jp",
-    "password": "atjn trzn ttlv zjqw",
+    "username": "contents@outward.jp",
+    "password": "owContents01",
     "use_ssl": true
   },
   "base_path": "C:\\Users\\OW\\Dropbox\\disk2とローカルの同期\\占い\\占い売上\\履歴\\ISP支払通知書",
   "log_file": "line_fortune_processor.log",
   "log_level": "INFO",
   "sender": "dev-line-fortune@linecorp.com",
-  "recipient": "mizoguchi@outward.jp",
+  "recipient": "contents@outward.jp",
   "subject_pattern": "LineFortune Daily Report",
   "search_days": 1,
   "retry_count": 3,
