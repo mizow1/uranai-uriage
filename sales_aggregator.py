@@ -490,45 +490,88 @@ class SalesAggregator:
         start_time = datetime.now()
         
         try:
-            # ファイル名にLINEを含むxlsファイルのみ処理
-            if 'line' not in file_path.name.lower() or file_path.suffix.lower() not in ['.xls', '.xlsx']:
-                result.add_error("LINEを含むxlsファイルではありません")
+            # ファイル名にLINEを含むファイル（xls, xlsx, csv）を処理
+            if 'line' not in file_path.name.lower() or file_path.suffix.lower() not in ['.xls', '.xlsx', '.csv']:
+                result.add_error("LINEを含むファイルではありません")
                 self.logger.warning(f"LINE占いファイル処理スキップ: {file_path.name}")
                 return result
             
-            # パスワード保護を考慮してファイルを読み込み
-            passwords = self.config.get_processing_settings().get('excel_passwords', ['', 'password', '123456', '000000', 'admin', 'user'])
-            
-            try:
-                wb = openpyxl.load_workbook(file_path, data_only=True)
-            except Exception as e:
-                if "password" in str(e).lower() or "protected" in str(e).lower():
-                    wb = self._load_encrypted_workbook(file_path, passwords)
-                    if wb is None:
-                        result.add_error("パスワード保護解除に失敗")
-                        return result
-                else:
-                    result.add_error(f"ファイル読み込みエラー: {str(e)}")
+            # ファイル形式に応じて読み込み処理を分岐
+            if file_path.suffix.lower() == '.csv':
+                # CSVファイルの場合
+                df = self.csv_handler.read_csv_with_encoding_detection(file_path)
+                if df is None or df.empty:
+                    result.add_error("CSVファイルの読み込みに失敗")
                     return result
-            
-            self.logger.log_file_operation("読み込み", file_path, True)
-            
-            # 「内訳」シートを検索
-            breakdown_sheet = None
-            for sheet_name in wb.sheetnames:
-                if '内訳' in sheet_name:
-                    breakdown_sheet = wb[sheet_name]
-                    break
-            
-            if breakdown_sheet is None:
-                result.add_error("「内訳」シートが見つかりません")
-                return result
-            
-            # DataFrameに変換
-            df = pd.DataFrame(breakdown_sheet.values)
-            if df.empty or len(df) < 2:
-                result.add_error("「内訳」シートにデータがありません")
-                return result
+                
+                self.logger.log_file_operation("読み込み", file_path, True)
+                
+                # CSVの場合は直接DataFrameとして処理
+                if len(df) < 2:
+                    result.add_error("CSVファイルにデータがありません")
+                    return result
+                
+                # CSVファイル用の処理（既に集計済みデータの場合）
+                if 'コンテンツ名' in df.columns and '実績' in df.columns and '情報提供料' in df.columns:
+                    # 既に集計済みの形式の場合は直接読み込み
+                    for _, row in df.iterrows():
+                        content_name = row['コンテンツ名']
+                        performance = pd.to_numeric(row['実績'], errors='coerce')
+                        info_fee = pd.to_numeric(row['情報提供料'], errors='coerce')
+                        
+                        if pd.notna(content_name) and (performance > 0 or info_fee > 0):
+                            detail = ContentDetail(
+                                content_group=str(content_name),
+                                performance=round(performance) if pd.notna(performance) else 0,
+                                information_fee=round(info_fee) if pd.notna(info_fee) else 0
+                            )
+                            result.add_detail(detail)
+                    
+                    # 合計を計算
+                    result.calculate_totals()
+                    result.success = True
+                    result.metadata = {
+                        'content_count': len(result.details),
+                        'csv_format': '集計済み'
+                    }
+                    
+                    self.logger.info(f"LINE CSV処理完了（集計済み形式）: {len(result.details)}コンテンツ")
+                    return result
+                
+            else:
+                # Excelファイルの場合（従来の処理）
+                passwords = self.config.get_processing_settings().get('excel_passwords', ['', 'password', '123456', '000000', 'admin', 'user'])
+                
+                try:
+                    wb = openpyxl.load_workbook(file_path, data_only=True)
+                except Exception as e:
+                    if "password" in str(e).lower() or "protected" in str(e).lower():
+                        wb = self._load_encrypted_workbook(file_path, passwords)
+                        if wb is None:
+                            result.add_error("パスワード保護解除に失敗")
+                            return result
+                    else:
+                        result.add_error(f"ファイル読み込みエラー: {str(e)}")
+                        return result
+                
+                self.logger.log_file_operation("読み込み", file_path, True)
+                
+                # 「内訳」シートを検索
+                breakdown_sheet = None
+                for sheet_name in wb.sheetnames:
+                    if '内訳' in sheet_name:
+                        breakdown_sheet = wb[sheet_name]
+                        break
+                
+                if breakdown_sheet is None:
+                    result.add_error("「内訳」シートが見つかりません")
+                    return result
+                
+                # DataFrameに変換
+                df = pd.DataFrame(breakdown_sheet.values)
+                if df.empty or len(df) < 2:
+                    result.add_error("「内訳」シートにデータがありません")
+                    return result
             
             # 1行目をヘッダーとして使用
             headers = df.iloc[0].astype(str).tolist()
