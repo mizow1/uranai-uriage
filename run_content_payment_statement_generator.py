@@ -4,8 +4,9 @@
 
 使用方法:
     python run_content_payment_statement_generator.py 2024 12
+    python run_content_payment_statement_generator.py 2024 12 aiga
     python run_content_payment_statement_generator.py 2024 12 --no-email
-    python run_content_payment_statement_generator.py 2024 12 --test
+    python run_content_payment_statement_generator.py 2024 12 aiga --test
 """
 
 import sys
@@ -26,8 +27,9 @@ def parse_arguments():
         epilog="""
 使用例:
   %(prog)s 2024 12                    # 2024年12月の明細書を生成・送信
+  %(prog)s 2024 12 aiga               # 2024年12月のaigaコンテンツのみ生成・送信
   %(prog)s 2024 12 --no-email         # メール送信せずに明細書のみ生成
-  %(prog)s 2024 12 --test             # システムテストを実行
+  %(prog)s 2024 12 aiga --test        # aigaコンテンツのシステムテストを実行
   %(prog)s 2024 12 --log-level DEBUG  # デバッグレベルでログ出力
         """
     )
@@ -42,6 +44,13 @@ def parse_arguments():
         'month',
         type=str,
         help='処理対象月（例: 12）'
+    )
+    
+    parser.add_argument(
+        'content',
+        type=str,
+        nargs='?',
+        help='処理対象コンテンツ名（例: aiga）。指定した場合、そのコンテンツのみ処理'
     )
     
     parser.add_argument(
@@ -134,6 +143,8 @@ def main():
         print("=" * 60)
         print("コンテンツ関連支払い明細書生成システム")
         print(f"処理対象: {args.year}年{args.month}月")
+        if args.content:
+            print(f"対象コンテンツ: {args.content}")
         print(f"メール送信: {'無効' if args.no_email else '有効'}")
         print(f"ログレベル: {args.log_level}")
         print("=" * 60)
@@ -148,11 +159,18 @@ def main():
         
         # メイン処理を実行
         send_emails = not args.no_email
+        
+        # コンテンツ指定がある場合はtemplate_filterとして使用
+        template_filter = args.template_filter
+        if args.content and not template_filter:
+            template_filter = f"{args.content}.xlsx"
+        
         success = controller.process_payment_statements(
             args.year, 
             args.month, 
             send_emails,
-            template_filter=args.template_filter
+            template_filter=template_filter,
+            content_name=args.content
         )
         
         if success:

@@ -24,7 +24,7 @@ class ExcelProcessor:
         self.config = config_manager
         self.logger = logging.getLogger(__name__)
     
-    def copy_template(self, template_name: str, output_path: str, target_month: str) -> str:
+    def copy_template(self, template_name: str, output_path: str, target_month: str, content_name: str = None) -> str:
         """テンプレートファイルを指定の出力パスに複製"""
         try:
             # テンプレートファイルのパスを取得
@@ -33,9 +33,14 @@ class ExcelProcessor:
             if not template_path or not Path(template_path).exists():
                 raise FileNotFoundError(f"テンプレートファイルが見つかりません: {template_name}")
             
-            # 出力ファイル名を生成 (YYYYMM_元ファイル名)
+            # 出力ファイル名を生成
             template_file = Path(template_path)
-            output_filename = f"{target_month}_{template_file.name}"
+            if content_name:
+                # コンテンツ名が指定されている場合: YYYYMM_content.xlsx
+                output_filename = f"{target_month}_{content_name}.xlsx"
+            else:
+                # コンテンツ名が指定されていない場合: YYYYMM_元ファイル名
+                output_filename = f"{target_month}_{template_file.name}"
             output_file_path = Path(output_path) / output_filename
             
             # ディレクトリを作成
@@ -212,7 +217,8 @@ class ExcelProcessor:
         self, 
         template_name: str, 
         sales_records: List[SalesRecord], 
-        target_month: str
+        target_month: str,
+        content_name: str = None
     ) -> str:
         """Excelファイルの完全処理（テンプレート複製 + データ書き込み）"""
         try:
@@ -222,7 +228,7 @@ class ExcelProcessor:
             output_dir = self.config.get_output_directory(year, month)
             
             # テンプレートを複製
-            excel_path = self.copy_template(template_name, output_dir, target_month)
+            excel_path = self.copy_template(template_name, output_dir, target_month, content_name)
             
             # 支払日を設定
             self.write_payment_date(excel_path, target_month)
