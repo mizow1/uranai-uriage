@@ -30,6 +30,9 @@ class SalesAggregator:
         self.csv_handler = CSVHandler(self.logger.logger, self.error_handler)
         self.excel_handler = ExcelHandler(self.logger.logger, self.error_handler)
         self.config = ConfigManager(logger=self.logger.logger)
+        
+        # docomoのKEIKOソウルメイト占術の統一コンテンツ名を定義
+        self.DOCOMO_KEIKO_UNIFIED_NAME = "ＫＥＩＫＯ☆ソウルメイト占術（統合）"
     
     def _load_encrypted_workbook(self, file_path: Path, passwords: list):
         """暗号化されたワークブックを読み込み"""
@@ -723,8 +726,47 @@ class SalesAggregator:
                     content_groups[content_name]['ak_values'].append(ak_column.iloc[i])
                     content_groups[content_name]['dk_values'].append(dk_column.iloc[i])
             
-            # 各コンテンツの計算
+            # KEIKOソウルメイト占術の統合処理
+            keiko_related_groups = {}
+            other_groups = {}
+            
             for content_name, values in content_groups.items():
+                # KEIKOソウルメイト占術関連かチェック
+                if ('ＫＥＩＫＯ' in content_name and 'ソウルメイト' in content_name) or \
+                   ('KEIKO' in content_name and 'ソウルメイト' in content_name):
+                    keiko_related_groups[content_name] = values
+                else:
+                    other_groups[content_name] = values
+            
+            # KEIKOソウルメイト占術関連の統合処理
+            if keiko_related_groups:
+                total_ak_values = []
+                total_dk_values = []
+                
+                for content_name, values in keiko_related_groups.items():
+                    total_ak_values.extend(values['ak_values'])
+                    total_dk_values.extend(values['dk_values'])
+                    self.logger.info(f"KEIKO統合対象: {content_name}")
+                
+                ak_sum = sum(total_ak_values)
+                dk_sum = sum(total_dk_values)
+                
+                # AK列を1.1で除算したものが「実績」
+                実績_sum = ak_sum / 1.1 if ak_sum > 0 else 0
+                # DK列を1.1で除算したものが「情報提供料」
+                情報提供料_sum = dk_sum / 1.1 if dk_sum > 0 else 0
+                
+                detail = ContentDetail(
+                    content_group=self.DOCOMO_KEIKO_UNIFIED_NAME,
+                    performance=round(実績_sum),
+                    information_fee=round(情報提供料_sum)
+                )
+                result.add_detail(detail)
+                
+                self.logger.info(f"KEIKO統合完了: {len(keiko_related_groups)}種類のコンテンツを統合")
+            
+            # その他のコンテンツの処理
+            for content_name, values in other_groups.items():
                 ak_sum = sum(values['ak_values'])
                 dk_sum = sum(values['dk_values'])
                 
@@ -922,7 +964,7 @@ class SalesAggregator:
             情報提供料 = 実績 / 1.1
             
             detail = ContentDetail(
-                content_group="ＫＥＩＫＯ☆ソウルメイト☆ソウルメイト占術",
+                content_group=self.DOCOMO_KEIKO_UNIFIED_NAME,
                 performance=round(実績),
                 information_fee=round(情報提供料)
             )
@@ -1143,6 +1185,35 @@ class SalesAggregator:
                     self.logger.error(f"処理失敗: {file_path.name} - {', '.join(result.errors)}")
         
         self.logger.info(f"全ファイル処理完了: {len(self.results)}件成功")
+        
+        # docomoのKEIKOソウルメイト占術の結果を合算
+        self._consolidate_docomo_keiko_results()
+    
+    def _consolidate_docomo_keiko_results(self):
+        """docomoのKEIKOソウルメイト占術の結果を年月別に合算（同一プラットフォーム内のみ）"""
+        if not self.results:
+            return
+        
+        # docomo内のKEIKOソウルメイト占術データの統計情報を出力
+        for result in self.results:
+            if result['platform'] != 'docomo':
+                continue
+                
+            year_month = result.get('年月', '')
+            
+            # docomoのKEIKOソウルメイト占術の詳細データを検索
+            if result['content_details']:
+                keiko_details = [detail for detail in result['content_details'] 
+                               if detail.content_group == self.DOCOMO_KEIKO_UNIFIED_NAME]
+                
+                if keiko_details:
+                    total_performance = sum(detail.performance for detail in keiko_details)
+                    total_information_fee = sum(detail.information_fee for detail in keiko_details)
+                    
+                    self.logger.info(f"docomo KEIKOソウルメイト占術統合結果 {year_month}: "
+                                   f"実績={total_performance:,}円, "
+                                   f"情報提供料={total_information_fee:,}円, "
+                                   f"ファイル={result['file_name']}")
     
     def export_to_csv(self, output_path: str):
         """結果をCSVファイルに出力"""

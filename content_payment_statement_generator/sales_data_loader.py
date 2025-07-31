@@ -30,13 +30,15 @@ class SalesDataLoader:
         try:
             df = pd.read_csv(file_path, encoding='utf-8-sig')
             
-            # 対象年月でフィルタリング
-            target_month_int = int(target_month)  # 文字列を数値に変換
-            
+            # 対象年月でフィルタリング（文字列として比較）
             if '年月' in df.columns:
-                filtered_df = df[df['年月'] == target_month_int].copy()
+                # 年月列を文字列として扱い、文字列として比較
+                df['年月'] = df['年月'].astype(str)
+                filtered_df = df[df['年月'] == target_month].copy()
             elif 'YYYYMM' in df.columns:
-                filtered_df = df[df['YYYYMM'] == target_month_int].copy()
+                # YYYYMM列を文字列として扱い、文字列として比較
+                df['YYYYMM'] = df['YYYYMM'].astype(str)
+                filtered_df = df[df['YYYYMM'] == target_month].copy()
             else:
                 self.logger.warning("年月列が見つかりません。全データを返します。")
                 filtered_df = df.copy()
