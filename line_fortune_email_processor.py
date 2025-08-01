@@ -178,14 +178,14 @@ def aggregate_all_service_data():
                     # ファイルを保存
                     if aggregator.save_contents_file(df, str(output_path)):
                         success_count += 1
-                        print(f"\n  ✓ {output_filename} - コンテンツ数: {len(df)}, 総実績: {df['実績'].sum():,}円")
+                        print(f"\n  OK {output_filename} - コンテンツ数: {len(df)}, 総実績: {df['実績'].sum():,}円")
                     else:
                         error_count += 1
-                        print(f"\n  ✗ {output_filename}: ファイル保存に失敗しました。")
+                        print(f"\n  X {output_filename}: ファイル保存に失敗しました。")
                         
                 except Exception as e:
                     error_count += 1
-                    print(f"\n  ✗ {dir_info['menu_filename']}: エラー - {e}")
+                    print(f"\n  X {dir_info['menu_filename']}: エラー - {e}")
                 finally:
                     pbar.update(1)
         
@@ -367,8 +367,8 @@ def merge_csv_files():
             
         output_path = line_dir / output_filename
         
-        # 既存ファイルの確認（自動モード時は自動上書き）
-        if output_path.exists() and not auto_mode:
+        # 既存ファイルの確認
+        if output_path.exists():
             overwrite = input(f"\n'{output_filename}'は既に存在します。上書きしますか？ (y/N): ").strip().lower()
             if overwrite not in ['y', 'yes']:
                 print("処理を中止しました。")
@@ -676,31 +676,45 @@ def main():
             print(f"  作成した統合ファイル数: {stats['consolidations_created']}")
             logger.info("処理結果の表示完了")
         
-        # メール処理後のCSV統合実行（既に内部で完了している場合はスキップ）
+        # メール処理後のCSV統合実行
         if success and do_merge_csvs and not args.dry_run:
+            print("\n" + "="*50)
             if stats.get('consolidations_created', 0) > 0:
-                print("\n" + "="*50)
-                print("CSV統合処理は既に完了しています")
-                print(f"作成した統合ファイル数: {stats['consolidations_created']}")
-                print("="*50)
+                print("CSV統合処理は既に完了していますが、確認のため再実行します")
+                print(f"作成済み統合ファイル数: {stats['consolidations_created']}")
             else:
-                print("\n" + "="*50)
                 print("CSV統合処理を開始します")
-                print("="*50)
-                merge_result = merge_csv_files()
-                if merge_result != 0:
-                    print("CSV統合処理でエラーが発生しました")
-                    return 1
+            print("="*50)
+            merge_result = merge_csv_files()
+            if merge_result != 0:
+                print("CSV統合処理でエラーが発生しました")
+                return 1
         
         # CSV統合後のサービス別集計実行
         if success and do_aggregate_services and not args.dry_run:
             print("\n" + "="*50)
             print("サービス別売上集計処理を開始します")
             print("="*50)
-            aggregate_result = aggregate_service_data(auto_mode=True)
-            if aggregate_result != 0:
-                print("サービス別集計処理でエラーが発生しました")
-                return 1
+            
+            # 処理した年月を取得してサービス別集計を実行
+            processed_dates = getattr(processor, 'processed_dates', set())
+            if processed_dates:
+                # 処理した年月ごとにサービス別集計を実行
+                for target_date in processed_dates:
+                    year = target_date.year
+                    month = target_date.month
+                    print(f"処理中: {year}-{month:02d}")
+                    aggregate_result = aggregate_service_data(auto_mode=True, target_year=year, target_month=month)
+                    if aggregate_result != 0:
+                        print(f"{year}-{month:02d} のサービス別集計処理でエラーが発生しました")
+                        return 1
+            else:
+                # 処理した年月が取得できない場合は現在の年月で実行（従来の動作）
+                print("処理した年月が特定できないため、現在の年月で実行します")
+                aggregate_result = aggregate_service_data(auto_mode=True)
+                if aggregate_result != 0:
+                    print("サービス別集計処理でエラーが発生しました")
+                    return 1
         
         logger.info("処理完了、プログラム終了")
         return 0 if success else 1

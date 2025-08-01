@@ -140,11 +140,15 @@ class LineContentsAggregator:
             if df is None:
                 raise ValueError(f"ファイルの読み込みに失敗しました: {file_path}")
             
-            # 必要な列の確認
-            required_columns = ['item_name', 'item_code', 'ios_paid_cost', 'android_paid_cost', 'web_paid_amount']
+            # 必要な列の確認（基本列のみ必須）
+            required_columns = ['item_name', 'item_code', 'ios_paid_cost', 'android_paid_cost']
             for col in required_columns:
                 if col not in df.columns:
                     raise ValueError(f"必要な列が見つかりません: {col}")
+            
+            # web_paid_amount列が存在しない場合は0で補完
+            if 'web_paid_amount' not in df.columns:
+                df['web_paid_amount'] = 0
             
             # コンテンツグループの抽出
             df['content_group'] = df['item_code'].apply(self.extract_content_group)

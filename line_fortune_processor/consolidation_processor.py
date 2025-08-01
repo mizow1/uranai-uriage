@@ -367,8 +367,18 @@ class ConsolidationProcessor:
         """
         try:
             import sys
-            sys.path.append(str(directory.parent.parent.parent.parent))
-            from line_contents_aggregator import LineContentsAggregator
+            import os
+            # プロジェクトルートをsys.pathに追加
+            project_root = directory.parent.parent.parent.parent
+            sys.path.insert(0, str(project_root))
+            
+            try:
+                from line_contents_aggregator import LineContentsAggregator
+            except ImportError as import_error:
+                self.logger.error(f"line_contents_aggregatorのインポートに失敗: {import_error}")
+                self.logger.error(f"プロジェクトルート: {project_root}")
+                self.logger.error(f"sys.path: {sys.path[:5]}")  # 最初の5つだけ表示
+                raise
             
             # line-menuファイルパスを生成
             menu_filename = f"line-menu-{year:04d}-{month:02d}.csv"
