@@ -71,6 +71,9 @@ class LineFortuneProcessor:
             AppConstants.STATS_CONSOLIDATIONS_CREATED: 0
         }
         
+        # 処理した日付を追跡
+        self.processed_dates = set()
+        
         self.session_id = None
         
     @handle_errors("メイン処理")
@@ -174,8 +177,9 @@ class LineFortuneProcessor:
             self.stats[AppConstants.STATS_EMAILS_ERROR] += 1
             return False
             
-        # 処理対象日付をログに記録
+        # 処理対象日付をログに記録し、追跡リストに追加
         self.logger.info(f"処理対象日付: {target_date} (件名: {subject[:30]}...)", email_id=email_id)
+        self.processed_dates.add(target_date)
         
         # 要件: CSV添付ファイルを抽出
         attachments = self.email_processor.extract_attachments(email_info, '.csv')
@@ -449,31 +453,50 @@ class LineFortuneProcessor:
     
     def _consolidate_all_data(self):
         """
-        全メール処理完了後にすべての月のデータを統合する
+        処理した年月期間のデータのみを統合する
         """
         try:
             base_path = Path(self.config.get('base_path', ''))
             if not base_path.exists():
                 return
             
-            # すべての月ディレクトリを処理
+            # 今回処理したメールから対象の年月を特定
+            processed_dates = self._get_processed_date_range()
+            if not processed_dates:
+                self.logger.info("処理対象の年月が特定できませんでした")
+                return
+                
             directories_processed = set()
             
-            for year_dir in base_path.iterdir():
-                if year_dir.is_dir() and year_dir.name.isdigit():
-                    for month_dir in year_dir.iterdir():
-                        if month_dir.is_dir():
-                            line_dir = month_dir / "line"
-                            if line_dir.exists() and str(line_dir) not in directories_processed:
-                                # 月次統合処理を実行
-                                if self.consolidation_processor.consolidate_monthly_data(line_dir):
-                                    self.stats[AppConstants.STATS_CONSOLIDATIONS_CREATED] += 1
-                                    self.logger.info(f"月次統合ファイルを作成しました: {line_dir}")
-                                    directories_processed.add(str(line_dir))
-                                else:
-                                    self.logger.warning(f"月次統合に失敗しました: {line_dir}")
+            # 処理した年月期間のみを対象とする
+            for target_date in processed_dates:
+                year_month = target_date.strftime('%Y%m')
+                year = target_date.strftime('%Y')
+                
+                # 対応するディレクトリパスを構築
+                year_dir = base_path / year
+                month_dir = year_dir / year_month
+                line_dir = month_dir / "line"
+                
+                if line_dir.exists() and str(line_dir) not in directories_processed:
+                    # 月次統合処理を実行
+                    if self.consolidation_processor.consolidate_monthly_data(line_dir):
+                        self.stats[AppConstants.STATS_CONSOLIDATIONS_CREATED] += 1
+                        self.logger.info(f"月次統合ファイルを作成しました: {line_dir}")
+                        directories_processed.add(str(line_dir))
+                    else:
+                        self.logger.warning(f"月次統合に失敗しました: {line_dir}")
             
-            self.logger.info(f"統合処理完了: {len(directories_processed)} ディレクトリ処理")
+            self.logger.info(f"統合処理完了: {len(directories_processed)} ディレクトリ処理 (処理対象年月: {len(processed_dates)})")
             
         except Exception as e:
             self.logger.error("統合処理中にエラーが発生しました", exception=e)
+    
+    def _get_processed_date_range(self) -> set:
+        """
+        処理した日付の範囲を取得
+        
+        Returns:
+            set: 処理した日付のセット
+        """
+        return self.processed_dates
