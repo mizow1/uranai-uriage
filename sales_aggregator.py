@@ -581,6 +581,12 @@ class SalesAggregator:
                 self.logger.warning(f"LINE占いファイル処理スキップ: {file_path.name}")
                 return result
             
+            # 既に集計済みのcontentsファイルかどうかをチェック
+            if 'line-contents-' in file_path.name.lower():
+                self.logger.info(f"集計済みLINEファイルを検出: {file_path.name} - 集計済みデータとして処理")
+                # 集計済みファイルの場合は直接CSVデータを読み込む
+                return self._process_aggregated_line_file(file_path)
+            
             # ファイル形式に応じて読み込み処理を分岐
             if file_path.suffix.lower() == '.csv':
                 # CSVファイルの場合
@@ -742,6 +748,83 @@ class SalesAggregator:
             }
             
             self.logger.info(f"LINE処理完了（新仕様）: {len(item_groups)}アイテムグループ")
+            
+        except Exception as e:
+            result.add_error(str(e))
+            self.error_handler.handle_file_processing_error(e, file_path)
+        
+        finally:
+            end_time = datetime.now()
+            result.processing_time = (end_time - start_time).total_seconds()
+        
+        return result
+    
+    def _process_aggregated_line_file(self, file_path: Path) -> ProcessingResult:
+        """集計済みLINEファイル（line-contents-）を処理"""
+        result = ProcessingResult(
+            platform="line",
+            file_name=file_path.name,
+            success=False
+        )
+        
+        start_time = datetime.now()
+        
+        try:
+            # CSVファイルを読み込み
+            df = self.csv_handler.read_csv_with_encoding_detection(file_path)
+            if df is None or df.empty:
+                result.add_error("集計済みCSVファイルの読み込みに失敗")
+                return result
+            
+            self.logger.log_file_operation("読み込み", file_path, True)
+            
+            # 集計済みファイルの列構成をチェック
+            expected_columns = ['コンテンツ名', '実績', '情報提供料']
+            if not all(col in df.columns for col in expected_columns):
+                # 列名の代替パターンをチェック
+                column_mapping = {}
+                for col in df.columns:
+                    col_lower = str(col).lower()
+                    if 'コンテンツ' in col or 'content' in col_lower:
+                        column_mapping['コンテンツ名'] = col
+                    elif '実績' in col or 'performance' in col_lower:
+                        column_mapping['実績'] = col
+                    elif '情報提供料' in col or 'information' in col_lower or 'fee' in col_lower:
+                        column_mapping['情報提供料'] = col
+                
+                if len(column_mapping) < 3:
+                    result.add_error(f"必要な列が見つかりません。検出された列: {list(df.columns)}")
+                    return result
+                
+                # 列名をマッピング
+                df = df.rename(columns=column_mapping)
+            
+            # 各行を処理してContentDetailを作成
+            for _, row in df.iterrows():
+                content_name = row.get('コンテンツ名', '')
+                performance = pd.to_numeric(row.get('実績', 0), errors='coerce')
+                info_fee = pd.to_numeric(row.get('情報提供料', 0), errors='coerce')
+                sales_count = pd.to_numeric(row.get('売上件数', 1), errors='coerce') if '売上件数' in row else 1
+                
+                if pd.notna(content_name) and str(content_name).strip() and (performance > 0 or info_fee > 0):
+                    detail = ContentDetail(
+                        content_group=str(content_name).strip(),
+                        performance=int(performance) if pd.notna(performance) else 0,
+                        information_fee=int(info_fee) if pd.notna(info_fee) else 0,
+                        sales_count=int(sales_count) if pd.notna(sales_count) else 1
+                    )
+                    result.add_detail(detail)
+            
+            # 合計を計算
+            result.calculate_totals()
+            result.success = True
+            result.metadata = {
+                'content_count': len(result.details),
+                'file_type': '集計済み',
+                'total_rows': len(df)
+            }
+            
+            self.logger.info(f"集計済みLINE処理完了: {len(result.details)}コンテンツ")
             
         except Exception as e:
             result.add_error(str(e))
@@ -1299,52 +1382,83 @@ class SalesAggregator:
                                    f"ファイル={result['file_name']}")
     
     def export_to_csv(self, output_path: str):
-        """結果をCSVファイルに出力"""
+        """結果をCSVファイルに出力（重複除去機能付き）"""
         if not self.results:
             self.logger.warning("出力するデータがありません")
             return
         
         try:
+            # 重複除去を行う
+            deduplicated_data = self._deduplicate_data()
+            
             with open(output_path, 'w', newline='', encoding='utf-8-sig') as csvfile:
                 writer = csv.writer(csvfile)
                 
                 # ヘッダー
                 writer.writerow(['プラットフォーム', 'ファイル名', 'コンテンツ', '実績', '情報提供料', '売上件数', '年月', '処理日時'])
                 
-                # データ
-                for result in self.results:
-                    platform = result['platform']
-                    file_name = result['file_name']
-                    year_month = result.get('年月', '')
-                    processing_time = result.get('処理日時', '')
-                    
-                    if result['content_details']:
-                        for detail in result['content_details']:
-                            writer.writerow([
-                                platform,
-                                file_name,
-                                detail.content_group,
-                                detail.performance,
-                                detail.information_fee,
-                                detail.sales_count,
-                                year_month,
-                                processing_time
-                            ])
-                    else:
-                        # 詳細がない場合は合計値を出力
-                        writer.writerow([
-                            platform,
-                            file_name,
-                            '合計',
-                            result['実績合計'],
-                            result['情報提供料'],
-                            0,  # 合計行では件数を0とする
-                            year_month,
-                            processing_time
-                        ])
+                # 重複除去されたデータを出力
+                for row_data in deduplicated_data:
+                    writer.writerow(row_data)
             
             self.logger.info(f"CSV出力完了: {output_path}")
             
         except Exception as e:
             self.logger.error(f"CSV出力エラー: {str(e)}")
             raise
+    
+    def _deduplicate_data(self) -> list:
+        """データの重複除去を行う"""
+        seen_keys = set()
+        deduplicated_data = []
+        duplicate_count = 0
+        
+        for result in self.results:
+            platform = result['platform']
+            file_name = result['file_name']
+            year_month = result.get('年月', '')
+            processing_time = result.get('処理日時', '')
+            
+            if result['content_details']:
+                for detail in result['content_details']:
+                    # 重複チェック用のキーを作成（プラットフォーム、コンテンツ、年月の組み合わせ）
+                    key = (platform, detail.content_group, year_month)
+                    
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        deduplicated_data.append([
+                            platform,
+                            file_name,
+                            detail.content_group,
+                            detail.performance,
+                            detail.information_fee,
+                            detail.sales_count,
+                            year_month,
+                            processing_time
+                        ])
+                    else:
+                        duplicate_count += 1
+                        self.logger.warning(f"重複データを除去: {platform} - {detail.content_group} - {year_month}")
+            else:
+                # 詳細がない場合は合計値を出力
+                key = (platform, '合計', year_month)
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    deduplicated_data.append([
+                        platform,
+                        file_name,
+                        '合計',
+                        result['実績合計'],
+                        result['情報提供料'],
+                        0,  # 合計行では件数を0とする
+                        year_month,
+                        processing_time
+                    ])
+                else:
+                    duplicate_count += 1
+                    self.logger.warning(f"重複データを除去: {platform} - 合計 - {year_month}")
+        
+        if duplicate_count > 0:
+            self.logger.info(f"重複データ除去完了: {duplicate_count}件の重複を除去")
+        
+        return deduplicated_data
