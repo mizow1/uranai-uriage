@@ -913,75 +913,53 @@ class SalesAggregator:
             
             # ファイル形式に応じて処理
             if file_path.suffix.lower() == '.csv':
-                # auCSVファイル専用の読み込み処理
+                # auCSVファイル専用の読み込み処理（KEIKO占術専用）
                 try:
+                    # 特定セル（F9, N15）を取得するため直接CSVを解析
                     with open(file_path, 'r', encoding='shift_jis') as f:
                         lines = f.readlines()
                     
-                    # データ部分を抽出（4行目以降、行番号がある行のみ）
-                    data_lines = []
-                    for i, line in enumerate(lines[3:], 4):  # 4行目から
-                        fields = line.strip().split(',')
-                        fields = [field.strip('"') for field in fields]
-                        if len(fields) >= 10 and fields[0]:  # 行番号がある行のみ
-                            data_lines.append(fields)
+                    # F9セル（6列目、9行目）とN15セル（14列目、15行目）を直接取得
+                    f9_value = None
+                    n15_value = None
                     
-                    if not data_lines:
-                        result.add_error("auCSVファイルにデータが見つかりません")
+                    # 9行目（インデックス8）のF列（インデックス5）を取得
+                    if len(lines) > 8:
+                        f9_line = lines[8].strip().split(',')
+                        f9_fields = [field.strip('"') for field in f9_line]
+                        if len(f9_fields) > 5:
+                            try:
+                                f9_value = float(f9_fields[5]) if f9_fields[5] else None
+                            except ValueError:
+                                pass
+                    
+                    # 15行目（インデックス14）のN列（インデックス13）を取得
+                    if len(lines) > 14:
+                        n15_line = lines[14].strip().split(',')
+                        n15_fields = [field.strip('"') for field in n15_line]
+                        if len(n15_fields) > 13:
+                            try:
+                                n15_value = float(n15_fields[13]) if n15_fields[13] else None
+                            except ValueError:
+                                pass
+                    
+                    if f9_value is None or n15_value is None:
+                        result.add_error(f"必要なセル値が取得できません - F9: {f9_value}, N15: {n15_value}")
                         return result
                     
-                    # 列名を設定（3行目のヘッダーから）
-                    header_line = lines[2].strip().split(',')
-                    headers = [h.strip('"') for h in header_line if h.strip('"')]
+                    self.logger.info(f"auCSV セル値取得成功: F9={f9_value}, N15={n15_value}")
                     
-                    # DataFrameを作成
-                    df_data = []
-                    for row in data_lines:
-                        while len(row) < len(headers):
-                            row.append('')
-                        df_data.append(row[:len(headers)])
+                    # au占いの正しい計算ルール
+                    # F9セルを1.1で除算した値が「実績」
+                    実績 = f9_value / 1.1
+                    # N15セルを1.1で除算した値が「情報提供料」
+                    情報提供料 = n15_value / 1.1
                     
-                    df = pd.DataFrame(df_data, columns=headers)
-                    self.logger.info(f"auCSV読み込み成功: {df.shape}")
+                    amounts_found = 2  # F9とN15の2つのセル値を取得
                     
                 except Exception as e:
                     result.add_error(f"auCSV専用処理エラー: {str(e)}")
                     return result
-                
-                self.logger.log_file_operation("読み込み", file_path, True)
-                
-                # 重要な金額列から抽出
-                target_columns = ['利用確定金額', 'お支払い対象金額合計', '利用確定件数']
-                total_amount = 0
-                amounts_found = 0
-                
-                for col in target_columns:
-                    if col in df.columns:
-                        for val in df[col].dropna():
-                            try:
-                                if val and val != '':
-                                    amount = float(str(val).replace(',', ''))
-                                    if amount > total_amount:
-                                        total_amount = amount
-                                        amounts_found += 1
-                                        self.logger.info(f"auCSV金額取得: {col}列から{amount}円")
-                            except:
-                                continue
-                
-                # それでも見つからない場合は全列を検索
-                if total_amount == 0:
-                    for col in df.columns:
-                        if '金額' in col or '合計' in col:
-                            for val in df[col].dropna():
-                                try:
-                                    if val and val != '':
-                                        amount = float(str(val).replace(',', ''))
-                                        if amount > total_amount:
-                                            total_amount = amount
-                                            amounts_found += 1
-                                            self.logger.info(f"auCSV金額取得(全検索): {col}列から{amount}円")
-                                except:
-                                    continue
                 
             else:
                 # PDFファイルの処理
@@ -1046,17 +1024,22 @@ class SalesAggregator:
             
             self.logger.log_file_operation("読み込み", file_path, True)
             
-            if total_amount == 0:
-                result.add_error("有効な金額が見つかりません - 手動確認が必要です")
-                return result
-            
-            # 合計金額を1.1で除算した値が「実績」
-            実績 = total_amount / 1.1
-            # 実績を1.1で除算した値が「情報提供料」（N15セルを1.1で除算）
-            情報提供料 = 実績 / 1.1
+            # CSVの場合はF9とN15から計算済み、PDFの場合はtotal_amountを使用
+            if file_path.suffix.lower() == '.csv':
+                # 既にF9とN15セルから計算済み
+                pass
+            else:
+                # PDFの場合の処理
+                if total_amount == 0:
+                    result.add_error("有効な金額が見つかりません - 手動確認が必要です")
+                    return result
+                
+                # PDFファイルの場合は従来通りの計算
+                実績 = total_amount / 1.1
+                情報提供料 = 実績 / 1.1
             
             detail = ContentDetail(
-                content_group=self.DOCOMO_KEIKO_UNIFIED_NAME,
+                content_group="ＫＥＩＫＯ☆ソウルメイト☆ソウルメイト占術",
                 performance=round(実績),
                 information_fee=round(情報提供料),
                 sales_count=1  # auは1ファイル1件として扱う
@@ -1069,15 +1052,21 @@ class SalesAggregator:
             # CSVとPDF処理で適切な値を設定
             if file_path.suffix.lower() == '.csv':
                 amounts_count = amounts_found
+                result.metadata = {
+                    'f9_value': f9_value,
+                    'n15_value': n15_value,
+                    'amounts_found': amounts_count,
+                    'calculated_performance': round(実績),
+                    'calculated_information_fee': round(情報提供料)
+                }
             else:
                 amounts_count = len(amounts) if 'amounts' in locals() else 0
-                
-            result.metadata = {
-                'total_amount': total_amount,
-                'amounts_found': amounts_count,
-                'calculated_performance': round(実績),
-                'calculated_information_fee': round(情報提供料)
-            }
+                result.metadata = {
+                    'total_amount': total_amount,
+                    'amounts_found': amounts_count,
+                    'calculated_performance': round(実績),
+                    'calculated_information_fee': round(情報提供料)
+                }
             
             self.logger.info(f"au処理完了: 実績={round(実績)}, 情報提供料={round(情報提供料)}")
             
