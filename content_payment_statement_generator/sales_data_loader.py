@@ -158,7 +158,7 @@ class SalesDataLoader:
             self.logger.error(f"データ統合エラー: {e}")
             raise
     
-    def create_sales_records(self, year: str, month: str) -> List[SalesRecord]:
+    def create_sales_records(self, year: str, month: str, content_filter: str = None) -> List[SalesRecord]:
         """統合されたデータからSalesRecordリストを作成"""
         target_month = f"{year}{month.zfill(2)}"
         
@@ -166,6 +166,11 @@ class SalesDataLoader:
         content_mapping = self.load_content_mapping()
         rate_data = self.load_rate_data()
         target_month_data = self.load_target_month_data()
+        
+        # 特定のコンテンツのみを処理する場合はフィルタリング
+        if content_filter:
+            target_month_data = target_month_data[target_month_data.iloc[:, 0].astype(str) == content_filter]
+            self.logger.info(f"コンテンツフィルター適用: {content_filter} - {len(target_month_data)}件に絞り込み")
         
         sales_records = []
         

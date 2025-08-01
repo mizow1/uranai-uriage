@@ -60,8 +60,8 @@ class MainController:
             if not self._validate_required_files(year, month):
                 return False
             
-            # 売上データを読み込み
-            sales_records = self._load_sales_data(year, month)
+            # 売上データを読み込み（特定のコンテンツがある場合はフィルター適用）
+            sales_records = self._load_sales_data(year, month, content_name)
             if not sales_records:
                 self.logger.error("有効な売上データが見つかりません")
                 return False
@@ -69,7 +69,7 @@ class MainController:
             # コンテンツ別に支払い明細書を作成
             payment_statements = self._group_records_by_content(sales_records)
             
-            # テンプレートフィルターが指定されている場合はフィルタリング
+            # テンプレートフィルターが指定されている場合はフィルタリング（さらなる絞り込み）
             if template_filter:
                 filtered_statements = {}
                 for key, statement in payment_statements.items():
@@ -138,12 +138,15 @@ class MainController:
             self.system_logger.log_error_details(e, "ファイル存在確認")
             return False
     
-    def _load_sales_data(self, year: str, month: str) -> List[SalesRecord]:
+    def _load_sales_data(self, year: str, month: str, content_filter: str = None) -> List[SalesRecord]:
         """売上データを読み込み"""
         try:
-            self.logger.info("売上データの読み込みを開始")
+            if content_filter:
+                self.logger.info(f"売上データの読み込みを開始（{content_filter}のみ）")
+            else:
+                self.logger.info("売上データの読み込みを開始")
             
-            sales_records = self.data_loader.create_sales_records(year, month)
+            sales_records = self.data_loader.create_sales_records(year, month, content_filter)
             
             self.system_logger.log_data_summary(
                 "売上レコード", 
