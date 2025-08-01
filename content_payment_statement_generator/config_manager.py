@@ -62,8 +62,11 @@ class ConfigManager(UnifiedConfigManager):
     
     def get_line_contents_file(self, year: str, month: str) -> str:
         """LINE用コンテンツファイルのパスを取得"""
+        # 正しいLINEコンテンツファイルのパス構造に合わせる
+        year_month = f"{year}{month.zfill(2)}"
+        line_dir = Path(self.base_paths['sales_data']) / year / year_month / "line"
         filename = f"line-contents-{year}-{month.zfill(2)}.csv"
-        return str(Path(self.base_paths['current_dir']) / filename)
+        return str(line_dir / filename)
     
     def get_contents_mapping_file(self) -> str:
         """コンテンツマッピングファイルのパスを取得"""

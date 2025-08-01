@@ -123,14 +123,35 @@ class SalesDataLoader:
         
         try:
             # データ統合ロジックを実装
-            # 共通のキー列でマージ（コンテンツ名など）
-            merged_df = pd.concat([monthly_data, line_data], ignore_index=True)
+            # LINEデータを優先的に保持するため、まずLINEデータから開始
+            merged_df = line_data.copy()
             
-            # 重複データの処理
-            if 'コンテンツ名' in merged_df.columns:
-                merged_df = merged_df.drop_duplicates(subset=['コンテンツ名'], keep='last')
+            # 月別売上データから、LINEデータに存在しないものだけを追加
+            if not monthly_data.empty:
+                # LINEデータのコンテンツ名・プラットフォーム組み合わせを取得
+                line_keys = set()
+                if 'コンテンツ' in line_data.columns and 'プラットフォーム' in line_data.columns:
+                    for _, row in line_data.iterrows():
+                        key = f"{row.get('コンテンツ', '')}_{row.get('プラットフォーム', '')}"
+                        line_keys.add(key)
+                elif 'コンテンツ名' in line_data.columns and 'ISP' in line_data.columns:
+                    for _, row in line_data.iterrows():
+                        key = f"{row.get('コンテンツ名', '')}_{row.get('ISP', '')}"
+                        line_keys.add(key)
+                
+                # 月別売上データから重複しないものを追加
+                for _, row in monthly_data.iterrows():
+                    content_key = ""
+                    if 'コンテンツ' in monthly_data.columns and 'プラットフォーム' in monthly_data.columns:
+                        content_key = f"{row.get('コンテンツ', '')}_{row.get('プラットフォーム', '')}"
+                    elif 'コンテンツ名' in monthly_data.columns and 'ISP' in monthly_data.columns:
+                        content_key = f"{row.get('コンテンツ名', '')}_{row.get('ISP', '')}"
+                    
+                    if content_key not in line_keys:
+                        # LINEデータに存在しない場合のみ追加
+                        merged_df = pd.concat([merged_df, pd.DataFrame([row])], ignore_index=True)
             
-            self.logger.info(f"データ統合完了: {len(merged_df)}件")
+            self.logger.info(f"データ統合完了: LINEデータ{len(line_data)}件 + 月別売上データ{len(monthly_data)}件 -> 統合後{len(merged_df)}件")
             return merged_df
             
         except Exception as e:
@@ -367,8 +388,18 @@ class SalesDataLoader:
                             else:
                                 actual_content_name = content_name  # その他のプラットフォームはデフォルト値を使用
                         
-                        # 検索候補は1つのみ
-                        search_candidates = [actual_content_name] if actual_content_name else [content_name]
+                        # 検索候補のリストを作成
+                        search_candidates = []
+                        if actual_content_name:
+                            search_candidates.append(actual_content_name)
+                        
+                        # LINEプラットフォームの場合、A列のコンテンツ名も検索候補に追加
+                        if target_column.lower() == 'line' and content_name not in search_candidates:
+                            search_candidates.append(content_name)
+                        
+                        # 検索候補が空の場合はデフォルト値を使用
+                        if not search_candidates:
+                            search_candidates = [content_name]
                         
                         self.logger.debug(f"マッピング一致: {content_name} -> actual_content_name='{actual_content_name}', search_candidates={search_candidates}")
                         

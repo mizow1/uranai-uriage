@@ -323,7 +323,7 @@ kmo2,rakuten,-3
 kmo2,excite,-3
 kmo2,ameba,-4
 kmo2,mediba,-4
-kmo2,line,
+kmo2,line,-3
 kmo2,docomo,
 kmo2,softbank,
 kmo2,au,
@@ -371,7 +371,7 @@ luna,rakuten,-3
 luna,excite,-3
 luna,ameba,-4
 luna,mediba,-4
-luna,line,
+luna,line,-3
 luna,docomo,
 luna,softbank,
 luna,au,
@@ -403,7 +403,7 @@ matsuyama,rakuten,-3
 matsuyama,excite,-3
 matsuyama,ameba,-4
 matsuyama,mediba,-4
-matsuyama,line,
+matsuyama,line,-3
 matsuyama,docomo,
 matsuyama,softbank,
 matsuyama,au,
@@ -427,7 +427,7 @@ mermaid,rakuten,-3
 mermaid,excite,-3
 mermaid,ameba,-4
 mermaid,mediba,-4
-mermaid,line,
+mermaid,line,-3
 mermaid,docomo,
 mermaid,softbank,
 mermaid,au,
@@ -483,7 +483,7 @@ miyoko-syufu,rakuten,-3
 miyoko-syufu,excite,-3
 miyoko-syufu,ameba,-4
 miyoko-syufu,mediba,-4
-miyoko-syufu,line,
+miyoko-syufu,line,-3
 miyoko-syufu,docomo,-4
 miyoko-syufu,softbank,
 miyoko-syufu,au,
@@ -491,7 +491,7 @@ miyoko-tirol,rakuten,-3
 miyoko-tirol,excite,-3
 miyoko-tirol,ameba,-4
 miyoko-tirol,mediba,-4
-miyoko-tirol,line,
+miyoko-tirol,line,-3
 miyoko-tirol,docomo,-4
 miyoko-tirol,softbank,
 miyoko-tirol,au,
@@ -499,7 +499,7 @@ mlo,rakuten,-3
 mlo,excite,-3
 mlo,ameba,-4
 mlo,mediba,-4
-mlo,line,
+mlo,line,-3
 mlo,docomo,
 mlo,softbank,
 mlo,au,
@@ -563,7 +563,7 @@ ophelia,rakuten,-3
 ophelia,excite,-3
 ophelia,ameba,-4
 ophelia,mediba,-4
-ophelia,line,
+ophelia,line,-3
 ophelia,docomo,
 ophelia,softbank,
 ophelia,au,
@@ -611,7 +611,7 @@ rie,rakuten,-3
 rie,excite,-3
 rie,ameba,-4
 rie,mediba,-4
-rie,line,
+rie,line,-3
 rie,docomo,
 rie,softbank,
 rie,au,
@@ -635,7 +635,7 @@ shape,rakuten,-3
 shape,excite,-3
 shape,ameba,-4
 shape,mediba,-4
-shape,line,-4
+shape,line,-3
 shape,docomo,
 shape,softbank,
 shape,au,
@@ -643,7 +643,7 @@ shape-count,rakuten,-3
 shape-count,excite,-3
 shape-count,ameba,-4
 shape-count,mediba,-4
-shape-count,line,-4
+shape-count,line,-3
 shape-count,docomo,
 shape-count,softbank,
 shape-count,au,
@@ -651,7 +651,7 @@ shintaku,rakuten,-3
 shintaku,excite,-3
 shintaku,ameba,-4
 shintaku,mediba,-4
-shintaku,line,-4
+shintaku,line,-3
 shintaku,docomo,
 shintaku,softbank,
 shintaku,au,
@@ -667,7 +667,7 @@ shokita,rakuten,-3
 shokita,excite,-3
 shokita,ameba,-4
 shokita,mediba,-4
-shokita,line,-4
+shokita,line,-3
 shokita,docomo,
 shokita,softbank,
 shokita,au,
@@ -699,7 +699,7 @@ takashima,rakuten,-3
 takashima,excite,-3
 takashima,ameba,-4
 takashima,mediba,-4
-takashima,line,
+takashima,line,-3
 takashima,docomo,
 takashima,softbank,
 takashima,au,
