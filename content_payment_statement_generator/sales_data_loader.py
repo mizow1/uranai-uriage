@@ -223,7 +223,7 @@ class SalesDataLoader:
                             platform=platform,
                             content_name=output_content_name,  # 出力用コンテンツ名を使用（D列優先）
                             performance=float(matching_data.get('実績', 0)),
-                            information_fee=float(matching_data.get('情報提供料', matching_data.get('情報提供料合計', 0))),
+                            information_fee=float(matching_data.get('情報提供料', 0)),
                             target_month=actual_target_month,  # 計算された実際の対象年月
                             template_file=template_file,
                             rate=rate_info['rate'],
@@ -463,6 +463,19 @@ class SalesDataLoader:
             # インデックスをリセットしてDataFrameを正規化
             merged_data = merged_data.reset_index(drop=True)
             
+            # デバッグ用：統合データの内容を表示
+            self.logger.debug(f"統合データ検索: コンテンツ='{content_name}', プラットフォーム='{platform}', データ件数={len(merged_data)}")
+            if not merged_data.empty:
+                self.logger.debug(f"統合データの列: {list(merged_data.columns)}")
+                # exciteデータのみを表示
+                if 'プラットフォーム' in merged_data.columns:
+                    platform_data = merged_data[merged_data['プラットフォーム'].astype(str).str.lower() == platform.lower()]
+                    if not platform_data.empty:
+                        self.logger.debug(f"{platform}データ {len(platform_data)}件:")
+                        for idx, row in platform_data.head(5).iterrows():
+                            content_col = row.get('コンテンツ', row.get('コンテンツ名', 'N/A'))
+                            self.logger.debug(f"  {idx}: コンテンツ='{content_col}', プラットフォーム='{row.get('プラットフォーム', 'N/A')}', 実績={row.get('実績', 'N/A')}")
+            
             # プラットフォーム名の正規化マッピング
             platform_mapping = {
                 'ameba': ['ameba', 'satori'],  # amebaはsatoriデータも含む
@@ -476,39 +489,67 @@ class SalesDataLoader:
             
             # 検索対象のプラットフォーム名リストを取得
             search_platforms = platform_mapping.get(platform.lower(), [platform])
+            self.logger.debug(f"検索対象プラットフォーム: {search_platforms}")
             
             # コンテンツ名での検索（完全一致、スペース正規化対応）
             content_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
             
+            # 検索対象コンテンツ名を正規化（前後の空白文字、改行文字を除去）
+            clean_content_name = content_name.strip()
+            
             # スペース文字を正規化した検索名を作成
-            normalized_content_name = content_name.replace('　', ' ').replace(' ', ' ')
+            normalized_content_name = clean_content_name.replace('　', ' ').replace(' ', ' ')
             
             if 'コンテンツ' in merged_data.columns:
+                # データ側も正規化（前後の空白文字、改行文字を除去）
+                clean_data = merged_data['コンテンツ'].astype(str).str.strip()
+                
                 # 完全一致
-                content_mask |= (merged_data['コンテンツ'].astype(str) == content_name)
+                exact_match = (clean_data == clean_content_name)
+                content_mask |= exact_match
+                self.logger.debug(f"コンテンツ列完全一致: '{clean_content_name}' -> {exact_match.sum()}件")
+                
                 # スペース正規化での一致
-                normalized_data = merged_data['コンテンツ'].astype(str).str.replace('　', ' ').str.replace(' ', ' ')
-                content_mask |= (normalized_data == normalized_content_name)
-                self.logger.debug(f"コンテンツ列での検索: '{content_name}' -> {content_mask.sum()}件マッチ")
+                normalized_data = clean_data.str.replace('　', ' ').str.replace(' ', ' ')
+                normalized_match = (normalized_data == normalized_content_name)
+                content_mask |= normalized_match
+                self.logger.debug(f"コンテンツ列正規化一致: '{normalized_content_name}' -> {normalized_match.sum()}件")
+                
             if 'コンテンツ名' in merged_data.columns:
+                # データ側も正規化（前後の空白文字、改行文字を除去）
+                clean_data = merged_data['コンテンツ名'].astype(str).str.strip()
+                
                 # 完全一致
-                content_mask |= (merged_data['コンテンツ名'].astype(str) == content_name)
+                exact_match = (clean_data == clean_content_name)
+                content_mask |= exact_match
+                self.logger.debug(f"コンテンツ名列完全一致: '{clean_content_name}' -> {exact_match.sum()}件")
+                
                 # スペース正規化での一致
-                normalized_data = merged_data['コンテンツ名'].astype(str).str.replace('　', ' ').str.replace(' ', ' ')
-                content_mask |= (normalized_data == normalized_content_name)
-                self.logger.debug(f"コンテンツ名列での検索: '{content_name}' -> {content_mask.sum()}件マッチ")
+                normalized_data = clean_data.str.replace('　', ' ').str.replace(' ', ' ')
+                normalized_match = (normalized_data == normalized_content_name)
+                content_mask |= normalized_match
+                self.logger.debug(f"コンテンツ名列正規化一致: '{normalized_content_name}' -> {normalized_match.sum()}件")
+            
+            self.logger.debug(f"コンテンツ検索結果: 合計{content_mask.sum()}件マッチ")
             
             # プラットフォーム名での検索（完全一致）
             platform_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
             
             for search_platform in search_platforms:
                 if 'プラットフォーム' in merged_data.columns:
-                    platform_mask |= (merged_data['プラットフォーム'].astype(str).str.lower() == search_platform.lower())
+                    platform_match = (merged_data['プラットフォーム'].astype(str).str.lower() == search_platform.lower())
+                    platform_mask |= platform_match
+                    self.logger.debug(f"プラットフォーム列一致 '{search_platform}': {platform_match.sum()}件")
                 if 'ISP' in merged_data.columns:
-                    platform_mask |= (merged_data['ISP'].astype(str).str.lower() == search_platform.lower())
+                    isp_match = (merged_data['ISP'].astype(str).str.lower() == search_platform.lower())
+                    platform_mask |= isp_match
+                    self.logger.debug(f"ISP列一致 '{search_platform}': {isp_match.sum()}件")
+            
+            self.logger.debug(f"プラットフォーム検索結果: 合計{platform_mask.sum()}件マッチ")
             
             # 両方の条件を満たすデータを検索
             matching_rows = merged_data[content_mask & platform_mask]
+            self.logger.debug(f"最終的な結合結果: {len(matching_rows)}件マッチ")
             
             if not matching_rows.empty:
                 self.logger.debug(f"完全一致でデータが見つかりました: {content_name}, {platform}")
@@ -528,19 +569,21 @@ class SalesDataLoader:
             content_partial_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
             
             # スペース除去版も作成
-            content_name_no_space = content_name.replace('　', '').replace(' ', '')
+            content_name_no_space = clean_content_name.replace('　', '').replace(' ', '')
             
             if 'コンテンツ' in merged_data.columns:
-                content_partial_mask |= merged_data['コンテンツ'].astype(str).str.contains(content_name, na=False, case=False)
-                content_partial_mask |= merged_data['コンテンツ'].astype(str).str.contains(content_name_no_space, na=False, case=False)
+                clean_data = merged_data['コンテンツ'].astype(str).str.strip()
+                content_partial_mask |= clean_data.str.contains(clean_content_name, na=False, case=False)
+                content_partial_mask |= clean_data.str.contains(content_name_no_space, na=False, case=False)
                 # 全角・半角スペースを除去したデータでも検索
-                no_space_data = merged_data['コンテンツ'].astype(str).str.replace('　', '').str.replace(' ', '')
+                no_space_data = clean_data.str.replace('　', '').str.replace(' ', '')
                 content_partial_mask |= no_space_data.str.contains(content_name_no_space, na=False, case=False)
             if 'コンテンツ名' in merged_data.columns:
-                content_partial_mask |= merged_data['コンテンツ名'].astype(str).str.contains(content_name, na=False, case=False)
-                content_partial_mask |= merged_data['コンテンツ名'].astype(str).str.contains(content_name_no_space, na=False, case=False)
+                clean_data = merged_data['コンテンツ名'].astype(str).str.strip()
+                content_partial_mask |= clean_data.str.contains(clean_content_name, na=False, case=False)
+                content_partial_mask |= clean_data.str.contains(content_name_no_space, na=False, case=False)
                 # 全角・半角スペースを除去したデータでも検索
-                no_space_data = merged_data['コンテンツ名'].astype(str).str.replace('　', '').str.replace(' ', '')
+                no_space_data = clean_data.str.replace('　', '').str.replace(' ', '')
                 content_partial_mask |= no_space_data.str.contains(content_name_no_space, na=False, case=False)
             
             platform_partial_mask = pd.Series([False] * len(merged_data), index=merged_data.index)
@@ -573,6 +616,26 @@ class SalesDataLoader:
             
             self.logger.debug(f"該当データが見つかりませんでした: {content_name}, {platform}")
             self.logger.debug(f"利用可能な列: {list(merged_data.columns)}")
+            
+            # 詳細なデバッグ情報を追加
+            if platform.lower() == 'excite' and 'シェイプシフター' in content_name:
+                self.logger.debug("=== 詳細デバッグ：excite シェイプシフター検索 ===")
+                if 'コンテンツ' in merged_data.columns:
+                    unique_contents = merged_data['コンテンツ'].unique()
+                    self.logger.debug(f"利用可能なコンテンツ名（最初の10件）: {unique_contents[:10]}")
+                    # シェイプシフターが含まれるコンテンツを検索
+                    shape_contents = [c for c in unique_contents if 'シェイプシフター' in str(c)]
+                    self.logger.debug(f"シェイプシフターを含むコンテンツ: {shape_contents}")
+                if 'プラットフォーム' in merged_data.columns:
+                    unique_platforms = merged_data['プラットフォーム'].unique()
+                    self.logger.debug(f"利用可能なプラットフォーム: {unique_platforms}")
+                    excite_rows = merged_data[merged_data['プラットフォーム'].astype(str).str.lower() == 'excite']
+                    self.logger.debug(f"exciteプラットフォームのデータ: {len(excite_rows)}件")
+                    if not excite_rows.empty:
+                        excite_contents = excite_rows['コンテンツ'].unique() if 'コンテンツ' in excite_rows.columns else []
+                        self.logger.debug(f"exciteのコンテンツ: {excite_contents}")
+                self.logger.debug("=== 詳細デバッグ終了 ===")
+            
             return None
             
         except Exception as e:

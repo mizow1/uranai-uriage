@@ -3,7 +3,7 @@
 """
 mediba占い売上データ処理スクリプト
 SalesSummaryファイルからB列（番組ID）ごとの売上集計を行い、
-実績と情報提供料合計を算出する
+実績と情報提供料を算出する
 """
 
 import pandas as pd
@@ -96,8 +96,8 @@ class MedibaSalesProcessor:
             # 結果をマージ
             merged = pd.merge(grouped, cp_cost_sum, on=program_id_col)
             
-            # 情報提供料合計 = 実績の40% - K列の値
-            merged['情報提供料合計'] = merged['実績'] * 0.4 - merged['CP売上負担額合計']
+            # 情報提供料 = 実績の40% - K列の値
+            merged['情報提供料'] = merged['実績'] * 0.4 - merged['CP売上負担額合計']
             merged = merged.rename(columns={program_id_col: '番組ID'})
             
             # ContentDetailリストを作成
@@ -105,7 +105,7 @@ class MedibaSalesProcessor:
                 detail = ContentDetail(
                     content_group=str(row['番組ID']),
                     performance=float(row['実績']),
-                    information_fee=float(row['情報提供料合計']),
+                    information_fee=float(row['情報提供料']),
                     additional_data={'CP売上負担額合計': float(row['CP売上負担額合計'])}
                 )
                 result.add_detail(detail)
@@ -208,7 +208,7 @@ class MedibaSalesProcessor:
                     '総レコード数': result.metadata.get('total_records', 0),  
                     '番組ID数': result.metadata.get('unique_programs', 0),
                     '実績合計': result.total_performance,
-                    '情報提供料合計': result.total_information_fee
+                    '情報提供料': result.total_information_fee
                 })
                 
                 # 上位10件を表示

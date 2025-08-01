@@ -45,7 +45,7 @@ def main():
             platform = result['platform']
             if platform not in platform_totals:
                 platform_totals[platform] = 0
-            platform_totals[platform] += result['情報提供料合計']
+            platform_totals[platform] += result['情報提供料']
         
         print("\nプラットフォーム別分配額:")
         for platform, total in platform_totals.items():

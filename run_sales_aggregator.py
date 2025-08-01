@@ -15,10 +15,9 @@ def main():
     default_base_path = r"C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ISP支払通知書"
     output_path = "月別ISP別コンテンツ別売上.csv"  # 固定ファイル名
     
-    # パス設定の確認
-    base_path = input(f"データフォルダのパス (デフォルト: {default_base_path}): ").strip()
-    if not base_path:
-        base_path = default_base_path
+    # パス設定（入力不要でデフォルトパスを使用）
+    base_path = default_base_path
+    print(f"使用するデータフォルダのパス: {base_path}")
     
     # パスの存在確認
     if not Path(base_path).exists():
@@ -60,7 +59,7 @@ def main():
             platform = result['platform']
             if platform not in platform_totals:
                 platform_totals[platform] = 0
-            platform_totals[platform] += result['情報提供料合計']
+            platform_totals[platform] += result['情報提供料']
         
         print("\nプラットフォーム別分配額:")
         for platform, total in platform_totals.items():

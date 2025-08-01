@@ -289,7 +289,7 @@ class TestEndToEndIntegration(unittest.TestCase):
         self.assertGreater(len(saved_df), 0)
         self.assertIn('番組ID', saved_df.columns)
         self.assertIn('実績', saved_df.columns)
-        self.assertIn('情報提供料合計', saved_df.columns)
+        self.assertIn('情報提供料', saved_df.columns)
 
 
 if __name__ == '__main__':

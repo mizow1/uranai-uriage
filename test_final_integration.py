@@ -53,7 +53,7 @@ def main():
                     year_month = aggregator._extract_year_month_from_path(file_path)
                     print(f"  プラットフォーム: {platform}")
                     print(f"  年月: {year_month}")
-                    print(f"  情報提供料合計: {result.total_information_fee:,}円")
+                    print(f"  情報提供料: {result.total_information_fee:,}円")
                     print(f"  実績合計: {result.total_performance:,}円")
                     
                     # 月別レポート用のデータを準備
@@ -87,16 +87,16 @@ def main():
                 if platform not in platform_summary:
                     platform_summary[platform] = {
                         '実績合計': 0,
-                        '情報提供料合計': 0,
+                        '情報提供料': 0,
                         'ファイル数': 0
                     }
                 platform_summary[platform]['実績合計'] += result['実績']
-                platform_summary[platform]['情報提供料合計'] += result['情報提供料']
+                platform_summary[platform]['情報提供料'] += result['情報提供料']
                 platform_summary[platform]['ファイル数'] += 1
             
             print(f"\n=== プラットフォーム別集計 ===")
             for platform, summary in platform_summary.items():
-                print(f"{platform}: ファイル数={summary['ファイル数']}, 実績合計={summary['実績合計']:,}円, 情報提供料合計={summary['情報提供料合計']:,}円")
+                print(f"{platform}: ファイル数={summary['ファイル数']}, 実績合計={summary['実績合計']:,}円, 情報提供料={summary['情報提供料']:,}円")
         else:
             print("処理された結果がありません")
             

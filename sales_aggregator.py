@@ -189,7 +189,7 @@ class SalesAggregator:
             result.success = True
             result.metadata = {
                 'content_groups_count': len(content_groups),
-                '情報提供料合計': round(情報提供料合計),
+                '情報提供料': round(情報提供料合計),
                 '実績合計': round(実績合計)
             }
             
@@ -462,15 +462,20 @@ class SalesAggregator:
                     content_name_col = text_cols[0]
                     self.logger.warning(f"コンテンツ名列が特定できないため、{content_name_col}列を使用します")
                 else:
-                    # それでも見つからない場合は従来通り一括処理
+                    # それでも見つからない場合は従来通り一括処理（exciteの場合はF列のみ）
                     self.logger.warning("コンテンツ名列が見つからないため、一括処理を行います")
                     total_amount = 0
-                    for col in numeric_cols:
-                        column_sum = df[col].sum()
-                        if column_sum > 0:
-                            total_amount += column_sum
+                    if len(df.columns) > 5:
+                        # exciteの場合はF列（インデックス5）のみを使用
+                        total_amount = df.iloc[:, 5].sum()
+                    else:
+                        # F列がない場合は従来通り
+                        for col in numeric_cols:
+                            column_sum = df[col].sum()
+                            if column_sum > 0:
+                                total_amount += column_sum
                     
-                    information_fee = total_amount * 0.3
+                    information_fee = total_amount * 0.6  # exciteは60%が情報提供料
                     
                     detail = ContentDetail(
                         content_group="excite_total",
@@ -492,12 +497,12 @@ class SalesAggregator:
                         if content_name not in content_groups:
                             content_groups[content_name] = []
                         
-                        # 同じ行の数値列の値を集計
+                        # exciteの場合はF列（金額列、インデックス5）のみを使用
                         row_total = 0
-                        for col in numeric_cols:
-                            value = pd.to_numeric(row[col], errors='coerce')
-                            if pd.notna(value) and value > 0:
-                                row_total += value
+                        if len(df.columns) > 5:
+                            f_col_value = pd.to_numeric(row.iloc[5], errors='coerce')
+                            if pd.notna(f_col_value) and f_col_value > 0:
+                                row_total = f_col_value
                         
                         if row_total > 0:
                             content_groups[content_name].append(row_total)
@@ -506,7 +511,7 @@ class SalesAggregator:
                 for content_name, amounts in content_groups.items():
                     if amounts:  # 空でない場合のみ処理
                         total_amount = sum(amounts)
-                        information_fee = total_amount * 0.3
+                        information_fee = total_amount * 0.6  # exciteは60%が情報提供料
                         
                         detail = ContentDetail(
                             content_group=content_name,
@@ -1233,7 +1238,7 @@ class SalesAggregator:
                         'platform': result.platform,
                         'file_name': result.file_name,
                         'content_details': result.details,
-                        '情報提供料合計': result.total_information_fee,
+                        '情報提供料': result.total_information_fee,
                         '実績合計': result.total_performance,
                         '年月': year_month,
                         '処理日時': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1284,7 +1289,7 @@ class SalesAggregator:
                 writer = csv.writer(csvfile)
                 
                 # ヘッダー
-                writer.writerow(['プラットフォーム', 'ファイル名', 'コンテンツ', '実績', '情報提供料合計', '年月', '処理日時'])
+                writer.writerow(['プラットフォーム', 'ファイル名', 'コンテンツ', '実績', '情報提供料', '年月', '処理日時'])
                 
                 # データ
                 for result in self.results:
@@ -1311,7 +1316,7 @@ class SalesAggregator:
                             file_name,
                             '合計',
                             result['実績合計'],
-                            result['情報提供料合計'],
+                            result['情報提供料'],
                             year_month,
                             processing_time
                         ])

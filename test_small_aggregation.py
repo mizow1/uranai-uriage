@@ -61,7 +61,7 @@ def main():
                     'platform': result.platform,
                     'file_name': result.file_name,
                     'content_details': result.details,
-                    '情報提供料合計': result.total_information_fee,
+                    '情報提供料': result.total_information_fee,
                     '実績合計': result.total_performance,
                     '年月': year_month,
                     '処理日時': '2025-07-30 22:30:00'
