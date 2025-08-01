@@ -231,7 +231,16 @@ class SalesAggregator:
                             content_groups[key_value] = 0
                             content_counts[key_value] = 0
                         content_groups[key_value] += amount_numeric
-                        content_counts[key_value] += 1  # 件数をカウント
+                        
+                        # 「従量実績」「docomo占い」シートでのみF列の値を件数として使用
+                        if sheet_name in ['従量実績', 'docomo占い']:
+                            count_value = row.iloc[5] if len(row) > 5 else 1
+                            count_numeric = pd.to_numeric(count_value, errors='coerce')
+                            if pd.notna(count_numeric):
+                                content_counts[key_value] += count_numeric
+                            else:
+                                content_counts[key_value] += 1  # F列が無効な場合は1を加算
+                        # 「月額実績」シートでは件数算出に使用しない（何もしない）
                         
         except Exception as e:
             self.logger.warning(f"{sheet_name}シート処理エラー: {e}")
@@ -690,7 +699,7 @@ class SalesAggregator:
                 if pd.notna(item_name):
                     item_name = str(item_name).strip()
                     if item_name not in item_groups:
-                        item_groups[item_name] = {'rs_target': 0, 'rs_amount': 0}
+                        item_groups[item_name] = {'rs_target': 0, 'rs_amount': 0, 'count': 0}
                     
                     # RS対象額を加算
                     if pd.notna(rs_target):
@@ -703,6 +712,9 @@ class SalesAggregator:
                         rs_amount_numeric = pd.to_numeric(rs_amount, errors='coerce')
                         if pd.notna(rs_amount_numeric):
                             item_groups[item_name]['rs_amount'] += rs_amount_numeric
+                    
+                    # 件数をカウント
+                    item_groups[item_name]['count'] += 1
             
             # 各アイテムの計算
             for item_name, values in item_groups.items():
@@ -710,8 +722,8 @@ class SalesAggregator:
                 実績 = values['rs_target'] / 1.1 if values['rs_target'] > 0 else 0
                 # RS金額の合計を1.1で除算→「情報提供料」
                 情報提供料 = values['rs_amount'] / 1.1 if values['rs_amount'] > 0 else 0
-                # 件数は集計時にカウントしたデータから取得（暫定で1を設定）
-                件数 = 1  # line-menuファイルからの件数取得が必要
+                # 実際の件数を使用
+                件数 = values['count']
                 
                 detail = ContentDetail(
                     content_group=item_name,
