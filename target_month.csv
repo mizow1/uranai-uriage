@@ -635,7 +635,7 @@ shape,rakuten,-3
 shape,excite,-3
 shape,ameba,-4
 shape,mediba,-4
-shape,line,
+shape,line,-4
 shape,docomo,
 shape,softbank,
 shape,au,
@@ -643,7 +643,7 @@ shape-count,rakuten,-3
 shape-count,excite,-3
 shape-count,ameba,-4
 shape-count,mediba,-4
-shape-count,line,
+shape-count,line,-4
 shape-count,docomo,
 shape-count,softbank,
 shape-count,au,
@@ -651,7 +651,7 @@ shintaku,rakuten,-3
 shintaku,excite,-3
 shintaku,ameba,-4
 shintaku,mediba,-4
-shintaku,line,
+shintaku,line,-4
 shintaku,docomo,
 shintaku,softbank,
 shintaku,au,
@@ -659,7 +659,7 @@ shintaku-count,rakuten,-3
 shintaku-count,excite,-3
 shintaku-count,ameba,-4
 shintaku-count,mediba,-4
-shintaku-count,line,
+shintaku-count,line,-4
 shintaku-count,docomo,
 shintaku-count,softbank,
 shintaku-count,au,
@@ -667,7 +667,7 @@ shokita,rakuten,-3
 shokita,excite,-3
 shokita,ameba,-4
 shokita,mediba,-4
-shokita,line,
+shokita,line,-4
 shokita,docomo,
 shokita,softbank,
 shokita,au,

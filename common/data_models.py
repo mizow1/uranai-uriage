@@ -55,6 +55,7 @@ class ContentDetail:
     content_group: str
     performance: float = 0.0
     information_fee: float = 0.0
+    sales_count: int = 0
     additional_data: Dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> Dict[str, Any]:
@@ -63,6 +64,7 @@ class ContentDetail:
             'content_group': self.content_group,
             'performance': self.performance,
             'information_fee': self.information_fee,
+            'sales_count': self.sales_count,
             **self.additional_data
         }
 

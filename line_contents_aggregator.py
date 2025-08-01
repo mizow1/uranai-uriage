@@ -154,7 +154,8 @@ class LineContentsAggregator:
             aggregated = df.groupby('content_group').agg({
                 'item_name': 'first',  # 代表的な商品名を取得
                 'ios_paid_cost': 'sum',  # iOS売上を合計
-                'android_paid_cost': 'sum'  # Android売上を合計
+                'android_paid_cost': 'sum',  # Android売上を合計
+                'item_code': 'count'  # 件数（行数）をカウント
             }).reset_index()
             
             # 実績と情報提供料の計算
@@ -165,7 +166,8 @@ class LineContentsAggregator:
                 results.append({
                     'コンテンツ名': row['content_group'],
                     '実績': performance,
-                    '情報提供料': info_fee
+                    '情報提供料': info_fee,
+                    '売上件数': row['item_code']  # 件数を追加
                 })
             
             return pd.DataFrame(results)

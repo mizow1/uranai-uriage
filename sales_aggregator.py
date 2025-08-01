@@ -160,15 +160,16 @@ class SalesAggregator:
             
             # 新仕様：各シートから情報提供料を集計し、同一コンテンツは合算する
             content_groups = {}
+            content_counts = {}  # 件数を管理
             
             # 1. 「従量実績」シートでC列の値が一致するもののJ列の合計額を算出
-            self._process_sheet_data(wb, '従量実績', content_groups, 2, 9)  # C列, J列
+            self._process_sheet_data(wb, '従量実績', content_groups, content_counts, 2, 9)  # C列, J列
             
             # 2. 「docomo占い」シートでC列の値が一致するもののJ列の合計額を算出
-            self._process_sheet_data(wb, 'docomo占い', content_groups, 2, 9)  # C列, J列
+            self._process_sheet_data(wb, 'docomo占い', content_groups, content_counts, 2, 9)  # C列, J列
             
             # 3. 「月額実績」シートのB列の値が一致するもののE列の合計額を算出
-            self._process_sheet_data(wb, '月額実績', content_groups, 1, 4)  # B列, E列
+            self._process_sheet_data(wb, '月額実績', content_groups, content_counts, 1, 4)  # B列, E列
             
             # 合計値を計算
             情報提供料合計 = sum(content_groups.values())
@@ -177,10 +178,12 @@ class SalesAggregator:
             # ContentDetailリストを作成
             for content_name, 情報提供料 in content_groups.items():
                 実績 = 情報提供料 / 0.3 if 情報提供料 > 0 else 0
+                件数 = content_counts.get(content_name, 0)
                 detail = ContentDetail(
                     content_group=str(content_name),
                     performance=round(実績),
-                    information_fee=round(情報提供料)
+                    information_fee=round(情報提供料),
+                    sales_count=件数
                 )
                 result.add_detail(detail)
             
@@ -205,7 +208,7 @@ class SalesAggregator:
         
         return result
     
-    def _process_sheet_data(self, wb, sheet_name: str, content_groups: dict, key_col: int, value_col: int):
+    def _process_sheet_data(self, wb, sheet_name: str, content_groups: dict, content_counts: dict, key_col: int, value_col: int):
         """シートデータを処理してコンテンツグループに集計"""
         try:
             if sheet_name not in wb.sheetnames:
@@ -226,7 +229,9 @@ class SalesAggregator:
                     if pd.notna(amount_numeric):
                         if key_value not in content_groups:
                             content_groups[key_value] = 0
+                            content_counts[key_value] = 0
                         content_groups[key_value] += amount_numeric
+                        content_counts[key_value] += 1  # 件数をカウント
                         
         except Exception as e:
             self.logger.warning(f"{sheet_name}シート処理エラー: {e}")
@@ -282,7 +287,8 @@ class SalesAggregator:
                 detail = ContentDetail(
                     content_group=hoge,
                     performance=round(実績_sum),
-                    information_fee=round(情報提供料_sum)
+                    information_fee=round(情報提供料_sum),
+                    sales_count=len(values)  # 件数を追加
                 )
                 result.add_detail(detail)
             
@@ -300,7 +306,8 @@ class SalesAggregator:
                         detail = ContentDetail(
                             content_group='月額実績',
                             performance=round(monthly_実績),
-                            information_fee=round(monthly_情報提供料)
+                            information_fee=round(monthly_情報提供料),
+                            sales_count=len(monthly_df)  # 件数を追加
                         )
                         result.add_detail(detail)
                 except Exception as e:
@@ -386,7 +393,8 @@ class SalesAggregator:
                 detail = ContentDetail(
                     content_group=str(b_value),
                     performance=round(実績_sum),
-                    information_fee=round(情報提供料_sum)
+                    information_fee=round(情報提供料_sum),
+                    sales_count=len(values['g_values'])  # 件数を追加
                 )
                 result.add_detail(detail)
             
@@ -480,7 +488,8 @@ class SalesAggregator:
                     detail = ContentDetail(
                         content_group="excite_total",
                         performance=round(total_amount),
-                        information_fee=round(information_fee)
+                        information_fee=round(information_fee),
+                        sales_count=len(df)  # 件数を追加
                     )
                     result.add_detail(detail)
             else:
@@ -516,7 +525,8 @@ class SalesAggregator:
                         detail = ContentDetail(
                             content_group=content_name,
                             performance=round(total_amount),
-                            information_fee=round(information_fee)
+                            information_fee=round(information_fee),
+                            sales_count=len(amounts)  # 件数を追加
                         )
                         result.add_detail(detail)
                 
@@ -584,12 +594,14 @@ class SalesAggregator:
                         content_name = row['コンテンツ名']
                         performance = pd.to_numeric(row['実績'], errors='coerce')
                         info_fee = pd.to_numeric(row['情報提供料'], errors='coerce')
+                        sales_count = pd.to_numeric(row.get('売上件数', 0), errors='coerce') if '売上件数' in row else 0
                         
                         if pd.notna(content_name) and (performance > 0 or info_fee > 0):
                             detail = ContentDetail(
                                 content_group=str(content_name),
                                 performance=round(performance) if pd.notna(performance) else 0,
-                                information_fee=round(info_fee) if pd.notna(info_fee) else 0
+                                information_fee=round(info_fee) if pd.notna(info_fee) else 0,
+                                sales_count=round(sales_count) if pd.notna(sales_count) else 0
                             )
                             result.add_detail(detail)
                     
@@ -698,11 +710,14 @@ class SalesAggregator:
                 実績 = values['rs_target'] / 1.1 if values['rs_target'] > 0 else 0
                 # RS金額の合計を1.1で除算→「情報提供料」
                 情報提供料 = values['rs_amount'] / 1.1 if values['rs_amount'] > 0 else 0
+                # 件数は集計時にカウントしたデータから取得（暫定で1を設定）
+                件数 = 1  # line-menuファイルからの件数取得が必要
                 
                 detail = ContentDetail(
                     content_group=item_name,
                     performance=round(実績),
-                    information_fee=round(情報提供料)
+                    information_fee=round(情報提供料),
+                    sales_count=件数
                 )
                 result.add_detail(detail)
             
@@ -822,7 +837,8 @@ class SalesAggregator:
                 detail = ContentDetail(
                     content_group=self.DOCOMO_KEIKO_UNIFIED_NAME,
                     performance=round(実績_sum),
-                    information_fee=round(情報提供料_sum)
+                    information_fee=round(情報提供料_sum),
+                    sales_count=len(total_bi_values)  # 件数を追加
                 )
                 result.add_detail(detail)
                 
@@ -841,7 +857,8 @@ class SalesAggregator:
                 detail = ContentDetail(
                     content_group=content_name,
                     performance=round(実績_sum),
-                    information_fee=round(情報提供料_sum)
+                    information_fee=round(情報提供料_sum),
+                    sales_count=len(values['bi_values'])  # 件数を追加
                 )
                 result.add_detail(detail)
             
@@ -1029,7 +1046,8 @@ class SalesAggregator:
             detail = ContentDetail(
                 content_group=self.DOCOMO_KEIKO_UNIFIED_NAME,
                 performance=round(実績),
-                information_fee=round(情報提供料)
+                information_fee=round(情報提供料),
+                sales_count=1  # auは1ファイル1件として扱う
             )
             result.add_detail(detail)
             
@@ -1142,7 +1160,8 @@ class SalesAggregator:
             detail = ContentDetail(
                 content_group="ＫＥＩＫＯソウルメイト占術",
                 performance=round(実績),
-                information_fee=round(情報提供料)
+                information_fee=round(情報提供料),
+                sales_count=1  # softbankは1ファイル1件として扱う
             )
             result.add_detail(detail)
             
@@ -1289,7 +1308,7 @@ class SalesAggregator:
                 writer = csv.writer(csvfile)
                 
                 # ヘッダー
-                writer.writerow(['プラットフォーム', 'ファイル名', 'コンテンツ', '実績', '情報提供料', '年月', '処理日時'])
+                writer.writerow(['プラットフォーム', 'ファイル名', 'コンテンツ', '実績', '情報提供料', '売上件数', '年月', '処理日時'])
                 
                 # データ
                 for result in self.results:
@@ -1306,6 +1325,7 @@ class SalesAggregator:
                                 detail.content_group,
                                 detail.performance,
                                 detail.information_fee,
+                                detail.sales_count,
                                 year_month,
                                 processing_time
                             ])
@@ -1317,6 +1337,7 @@ class SalesAggregator:
                             '合計',
                             result['実績合計'],
                             result['情報提供料'],
+                            0,  # 合計行では件数を0とする
                             year_month,
                             processing_time
                         ])
