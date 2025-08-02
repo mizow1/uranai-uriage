@@ -64,6 +64,7 @@ class PDFConverter:
         """COM経由でExcelファイルをPDF形式に変換（Windows用）"""
         try:
             import win32com.client
+            import pywintypes
             
             excel_file = Path(excel_path)
             
@@ -75,6 +76,7 @@ class PDFConverter:
             
             # COMオブジェクトを作成
             excel_app = None
+            workbook = None
             
             try:
                 excel_app = win32com.client.Dispatch("Excel.Application")
@@ -89,22 +91,33 @@ class PDFConverter:
                     Type=0,  # xlTypePDF
                     Filename=str(pdf_path.absolute()),
                     Quality=0,  # xlQualityStandard
-                    IncludeDocProperties=True,  # IncludeDocPropsではなくIncludeDocProperties
+                    IncludeDocProperties=True,
                     IgnorePrintAreas=False,
                     OpenAfterPublish=False
                 )
                 
-                # ワークブックを閉じる
-                workbook.Close(SaveChanges=False)
-                
                 self.logger.info(f"PDF変換完了 (COM): {pdf_path}")
                 return str(pdf_path)
                 
+            except Exception as inner_e:
+                self.logger.error(f"PDF変換処理中エラー (COM): {inner_e}")
+                raise
+                
             finally:
-                # Excelアプリケーションを終了
-                if excel_app:
-                    excel_app.Quit()
-                    excel_app = None
+                # リソースを安全に解放
+                try:
+                    if workbook is not None:
+                        workbook.Close(SaveChanges=False)
+                        workbook = None
+                except Exception as e:
+                    self.logger.warning(f"ワークブック終了エラー: {e}")
+                
+                try:
+                    if excel_app is not None:
+                        excel_app.Quit()
+                        excel_app = None
+                except Exception as e:
+                    self.logger.warning(f"Excel終了エラー: {e}")
             
         except ImportError:
             self.logger.warning("win32com.clientが利用できません。xlwingsを使用します。")

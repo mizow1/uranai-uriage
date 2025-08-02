@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
     "allow": [
       "Bash(dir:*)",
@@ -23,7 +24,9 @@
       "mcp__serena__get_current_config",
       "mcp__serena__write_memory",
       "mcp__serena__find_file",
-      "mcp__serena__initial_instructions"
+      "mcp__serena__initial_instructions",
+      "Bash(if exist \"C:\\Users\\OW\\pj\\uriage\\token.json\" del \"C:\\Users\\OW\\pj\\uriage\\token.json\")",
+      "Bash(rm:*)"
     ],
     "deny": []
   }

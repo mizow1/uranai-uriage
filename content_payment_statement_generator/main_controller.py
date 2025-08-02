@@ -290,18 +290,18 @@ class MainController:
             self.system_logger.log_file_operation("PDF変換", pdf_path, True)
             self.statistics['generated_pdfs'] += 1
             
-            # メール送信
+            # メール下書き作成
             if send_email and self._validate_email_address(statement.recipient_email):
-                if self.email_processor.send_payment_notification(
+                if self.email_processor.create_payment_notification_draft(
                     statement.recipient_email,
                     pdf_path,
                     target_month,
                     statement.content_name
                 ):
                     self.statistics['sent_emails'] += 1
-                    self.logger.info(f"メール送信完了: {statement.recipient_email}")
+                    self.logger.info(f"メール下書き作成完了: {statement.recipient_email}")
                 else:
-                    raise EmailSendError(f"メール送信に失敗しました: {statement.recipient_email}")
+                    raise EmailSendError(f"メール下書き作成に失敗しました: {statement.recipient_email}")
             
             return True
             

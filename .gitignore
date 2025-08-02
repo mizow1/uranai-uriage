@@ -32,6 +32,19 @@ build/
 # Git 管理外ファイル
 !.gitignore
 
+# Google API認証ファイル
+credentials.json
+token.json
+client_secret*.json
+*credentials*.json
+service-account*.json
+
+# その他の認証・秘匿情報
+*.key
+*.pem
+.secrets/
+config/secrets.py
+
 # 自分用バックアップなど（Dropboxなどで使うなら）
 *.bak
 *~

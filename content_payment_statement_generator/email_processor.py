@@ -29,8 +29,12 @@ except ImportError:
 class EmailProcessor:
     """メール送信処理クラス"""
     
-    # Gmail API のスコープ
-    SCOPES = ['https://www.googleapis.com/auth/gmail.send']
+    # Gmail API のスコープ（下書き作成に必要なスコープを追加）
+    SCOPES = [
+        'https://www.googleapis.com/auth/gmail.send',
+        'https://www.googleapis.com/auth/gmail.compose',
+        'https://www.googleapis.com/auth/gmail.modify'
+    ]
     
     def __init__(self, credentials_path: str = 'credentials.json', token_path: str = 'token.json'):
         """メール送信処理クラスを初期化"""
@@ -78,6 +82,9 @@ class EmailProcessor:
             
         except Exception as e:
             self.logger.error(f"Gmail APIサービス初期化エラー: {e}")
+            import traceback
+            self.logger.error(f"トレースバック: {traceback.format_exc()}")
+            self.logger.error("認証情報ファイル(credentials.json)とトークンファイル(token.json)を確認してください")
             return None
     
     def create_message_with_attachment(
@@ -129,6 +136,46 @@ class EmailProcessor:
             self.logger.error(f"メールメッセージ作成エラー: {e}")
             raise
     
+    def save_as_draft(self, message: Dict[str, str]) -> bool:
+        """メッセージを下書きとして保存"""
+        try:
+            if not self.gmail_service:
+                self.logger.error("Gmail APIサービスが初期化されていません")
+                self.logger.error("1. credentials.jsonファイルが存在するか確認してください")
+                self.logger.error("2. token.jsonファイルを削除して再認証を試してください")
+                self.logger.error("3. Gmail APIが有効になっているか確認してください")
+                return False
+            
+            # Gmail APIで下書きを作成
+            self.logger.debug("下書き作成リクエストを準備中...")
+            draft_request = {
+                'message': message
+            }
+            
+            self.logger.debug("Gmail APIに下書き作成リクエストを送信中...")
+            result = self.gmail_service.users().drafts().create(
+                userId='me',
+                body=draft_request
+            ).execute()
+            
+            draft_id = result.get('id', 'Unknown')
+            self.logger.info(f"下書き作成完了: Draft ID {draft_id}")
+            self.logger.info("Gmailの下書きフォルダに下書きメールが作成されました")
+            return True
+            
+        except HttpError as error:
+            error_details = getattr(error, 'error_details', str(error))
+            self.logger.error(f"Gmail API エラー: {error}")
+            self.logger.error(f"エラー詳細: {error_details}")
+            if hasattr(error, 'resp') and hasattr(error.resp, 'status'):
+                self.logger.error(f"HTTPステータス: {error.resp.status}")
+            return False
+        except Exception as e:
+            self.logger.error(f"下書き保存エラー: {e}")
+            import traceback
+            self.logger.error(f"トレースバック: {traceback.format_exc()}")
+            return False
+
     def send_message(self, message: Dict[str, str]) -> bool:
         """メールメッセージを送信"""
         try:
@@ -152,14 +199,14 @@ class EmailProcessor:
             self.logger.error(f"メール送信エラー: {e}")
             return False
     
-    def send_payment_notification(
+    def create_payment_notification_draft(
         self,
         recipient: str,
         pdf_path: str,
         target_month: str,
         content_name: str = ""
     ) -> bool:
-        """支払い通知メールを送信"""
+        """支払い通知メールを下書きとして作成"""
         try:
             # メール設定
             sender = "mizoguchi@outward.jp"
@@ -181,18 +228,61 @@ class EmailProcessor:
                 attachment_path=pdf_path
             )
             
-            # メールを送信
-            success = self.send_message(message)
+            # 下書きとして保存
+            success = self.save_as_draft(message)
             
             if success:
-                self.logger.info(f"支払い通知メール送信完了: {recipient}")
+                self.logger.info(f"支払い通知メール下書き作成完了: {recipient}")
             else:
-                self.logger.error(f"支払い通知メール送信失敗: {recipient}")
+                self.logger.error(f"支払い通知メール下書き作成失敗: {recipient}")
             
             return success
             
         except Exception as e:
-            self.logger.error(f"支払い通知メール送信エラー: {e}")
+            self.logger.error(f"支払い通知メール下書き作成エラー: {e}")
+            return False
+
+    def send_payment_notification(
+        self,
+        recipient: str,
+        pdf_path: str,
+        target_month: str,
+        content_name: str = ""
+    ) -> bool:
+        """支払い通知メールを下書きとして作成（注意：送信はしません）"""
+        try:
+            # メール設定
+            sender = "mizoguchi@outward.jp"
+            cc = "ow-fortune@ml.outward.jp"
+            bcc = "mizoguchi@outward.jp"
+            subject = "今月のお支払額のご連絡"
+            
+            # メール本文を作成
+            body = self._create_payment_notification_body(target_month, content_name)
+            
+            # メールメッセージを作成
+            message = self.create_message_with_attachment(
+                sender=sender,
+                recipient=recipient,
+                cc=cc,
+                bcc=bcc,
+                subject=subject,
+                body=body,
+                attachment_path=pdf_path
+            )
+            
+            # 下書きとして保存（送信ではなく）
+            success = self.save_as_draft(message)
+            
+            if success:
+                self.logger.info(f"支払い通知メール下書き作成完了: {recipient}")
+            else:
+                self.logger.error(f"支払い通知メール下書き作成失敗: {recipient}")
+            
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"支払い通知メール下書き作成エラー: {e}")
             return False
     
     def _create_payment_notification_body(self, target_month: str, content_name: str = "") -> str:
@@ -224,18 +314,18 @@ mizoguchi@outward.jp"""
             return "今月のお支払額をご連絡いたします。"
     
     def schedule_email(self, email_data: Dict, send_date: datetime) -> Optional[str]:
-        """メール予約送信を設定（注意: Gmail APIは予約送信をサポートしていません）"""
+        """メール下書き作成を設定（注意: 送信は行わず下書きのみ作成します）"""
         try:
             # Gmail APIは予約送信をネイティブサポートしていないため、
-            # ここでは即座に送信するか、別のスケジューリングシステムを使用する必要があります
+            # ここでは下書きとして保存します
             
             current_time = datetime.now()
             
             if send_date <= current_time:
-                # 指定時刻が過去または現在の場合は即座に送信
-                self.logger.info("指定時刻が過去のため、即座にメールを送信します")
-                success = self.send_message(email_data)
-                return "immediate_send" if success else None
+                # 指定時刻が過去または現在の場合は下書きとして保存
+                self.logger.info("指定時刻が過去のため、下書きとして保存します")
+                success = self.save_as_draft(email_data)
+                return "draft_created" if success else None
             else:
                 # 将来の日時の場合は警告を出力
                 self.logger.warning(f"Gmail APIは予約送信をサポートしていません。指定日時: {send_date}")
