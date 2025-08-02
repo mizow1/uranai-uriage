@@ -244,6 +244,12 @@ class SalesDataLoader:
                         # レートデータから料率とメールアドレスを取得
                         rate_info = self._get_rate_info(template_file, rate_data)
                         
+                        # 売上件数を取得（amebaとmedibaのみ）
+                        sales_count = 0
+                        if platform.lower() in ['ameba', 'mediba']:
+                            sales_count = int(matching_data.get('売上件数', 0))
+                            self.logger.debug(f"売上件数取得: {output_content_name} ({platform}) - 件数: {sales_count}")
+                        
                         # SalesRecordを作成（出力用コンテンツ名を使用）
                         record = SalesRecord(
                             platform=platform,
@@ -253,7 +259,8 @@ class SalesDataLoader:
                             target_month=actual_target_month,  # 計算された実際の対象年月
                             template_file=template_file,
                             rate=rate_info['rate'],
-                            recipient_email=rate_info['email']
+                            recipient_email=rate_info['email'],
+                            sales_count=sales_count  # 売上件数を設定
                         )
                         
                         # デバッグ情報を追加
@@ -288,7 +295,8 @@ class SalesDataLoader:
                                 target_month=actual_target_month,  # 計算された実際の対象年月
                                 template_file=template_file,
                                 rate=rate_info['rate'],
-                                recipient_email=rate_info['email']
+                                recipient_email=rate_info['email'],
+                                sales_count=0  # 0円の場合は件数も0
                             )
                             
                             # デバッグ情報を追加

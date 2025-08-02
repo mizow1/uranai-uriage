@@ -56,30 +56,60 @@ class ExcelProcessor:
             self.logger.error(f"テンプレートファイル複製エラー: {e}")
             raise
     
-    def write_payment_date(self, workbook_path: str, target_month: str) -> None:
-        """S3セルに対象年月の5日の日付を記入"""
+    def write_payment_date(self, workbook_path: str, target_month: str, template_name: str) -> None:
+        """S3セルに適切な日付を記入"""
         try:
             # Excelファイルを開く
             workbook = openpyxl.load_workbook(workbook_path)
             worksheet = workbook.active
             
-            # 対象年月の5日を計算
+            # 対象年月を解析
             year = int(target_month[:4])
             month = int(target_month[4:])
             
-            # 対象年月の5日の日付を作成
-            payment_date = datetime(year, month, 5)
+            # テンプレート名から判定してS3セルに記入する日付を決定
+            template_lower = template_name.lower()
+            target_templates = ['epc', 'gaia', 'ichild', 'macalon', 'mermaid', 'shape', 'shintaku']
             
-            # S3セルに日付を設定
-            worksheet['S3'] = payment_date
+            if any(template in template_lower for template in target_templates):
+                # 前月末日を計算
+                if month == 1:
+                    prev_year = year - 1
+                    prev_month = 12
+                else:
+                    prev_year = year
+                    prev_month = month - 1
+                
+                # 前月末日を取得
+                if prev_month in [1, 3, 5, 7, 8, 10, 12]:
+                    last_day = 31
+                elif prev_month in [4, 6, 9, 11]:
+                    last_day = 30
+                else:  # 2月
+                    # うるう年判定
+                    if (prev_year % 4 == 0 and prev_year % 100 != 0) or (prev_year % 400 == 0):
+                        last_day = 29
+                    else:
+                        last_day = 28
+                
+                date_to_write = datetime(prev_year, prev_month, last_day)
+                self.logger.info(f"対象テンプレート {template_name}: S3セルに前月末日を記入: {date_to_write.strftime('%Y年%m月%d日')}")
+            else:
+                # その他のテンプレートは従来通り対象年月の5日
+                date_to_write = datetime(year, month, 5)
+                self.logger.info(f"通常テンプレート {template_name}: S3セルに5日を記入: {date_to_write.strftime('%Y年%m月%d日')}")
+            
+            # S3セルに日付を設定（yyyy年m月d日フォーマット）
+            formatted_date = date_to_write.strftime('%Y年%m月%d日')
+            worksheet['S3'] = formatted_date
             
             # ファイルを保存
             workbook.save(workbook_path)
             
-            self.logger.info(f"支払日を設定しました: S3セル = {payment_date.strftime('%Y/%m/%d')}")
+            self.logger.info(f"日付を設定しました: S3セル = {formatted_date}")
             
         except Exception as e:
-            self.logger.error(f"支払日設定エラー: {e}")
+            self.logger.error(f"日付設定エラー: {e}")
             raise
         finally:
             if 'workbook' in locals():
@@ -92,6 +122,12 @@ class ExcelProcessor:
             workbook = openpyxl.load_workbook(workbook_path)
             worksheet = workbook.active
             
+            # W21セルが「件数」かチェック
+            w21_cell = worksheet['W21']
+            has_count_column = (w21_cell.value and str(w21_cell.value).strip() == '件数')
+            
+            self.logger.info(f"W21セルの値: '{w21_cell.value}', 件数列有効: {has_count_column}")
+            
             # 開始行（23行目）
             start_row = 23
             
@@ -99,7 +135,7 @@ class ExcelProcessor:
                 row_num = start_row + i
                 
                 # 各列にデータを設定
-                self._write_record_to_row(worksheet, row_num, record, processing_month)
+                self._write_record_to_row(worksheet, row_num, record, processing_month, has_count_column)
             
             # ファイルを保存
             workbook.save(workbook_path)
@@ -113,7 +149,7 @@ class ExcelProcessor:
             if 'workbook' in locals():
                 workbook.close()
     
-    def _write_record_to_row(self, worksheet: Worksheet, row_num: int, record: SalesRecord, processing_month: str) -> None:
+    def _write_record_to_row(self, worksheet: Worksheet, row_num: int, record: SalesRecord, processing_month: str, has_count_column: bool = False) -> None:
         """1つのSalesRecordを指定行に書き込み"""
         try:
             # 要求仕様に基づく新しいルール:
@@ -123,6 +159,7 @@ class ExcelProcessor:
             # M列：target_month.csvのC列の数値分、対象年月からマイナスした年月
             # S列：該当年月の「実績」額
             # Y列：該当年月の「情報提供料」額
+            # W列：件数（W21セルが「件数」の場合のみ、amebaとmedibaのみ対象）
             
             # セルへの書き込み（マージセルの場合は上位セルに書き込む）
             self._safe_write_cell(worksheet, f'A{row_num}', processing_month)       # A列：処理開始時に指定した年月
@@ -131,6 +168,11 @@ class ExcelProcessor:
             self._safe_write_cell(worksheet, f'M{row_num}', record.target_month)   # M列：マイナスした年月
             self._safe_write_cell(worksheet, f'S{row_num}', record.performance)    # S列：実績額
             self._safe_write_cell(worksheet, f'Y{row_num}', record.information_fee) # Y列：情報提供料額
+            
+            # W列：件数（条件に合致する場合のみ）
+            if has_count_column and record.platform.lower() in ['ameba', 'mediba'] and record.sales_count > 0:
+                self._safe_write_cell(worksheet, f'W{row_num}', record.sales_count)
+                self.logger.debug(f"W{row_num}に件数を記入: {record.sales_count} ({record.platform})")
             
             # AC列（料率）は数式が存在する場合は保持し、なければ値を設定
             self._write_rate_cell(worksheet, f'AC{row_num}', record.rate)
@@ -231,7 +273,7 @@ class ExcelProcessor:
             excel_path = self.copy_template(template_name, output_dir, target_month, content_name)
             
             # 支払日を設定
-            self.write_payment_date(excel_path, target_month)
+            self.write_payment_date(excel_path, target_month, template_name)
             
             # 明細データを書き込み（処理月を渡す）
             self.write_statement_details(excel_path, sales_records, target_month)
