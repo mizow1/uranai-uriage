@@ -1180,6 +1180,12 @@ class SalesAggregator:
                 self.logger.warning(f"softbank占いファイル処理スキップ: {file_path.name}")
                 return result
             
+            # ファイル名から年月を抽出（OID_PAY_9ATI_yyyymm.PDF形式）
+            year_month = self._extract_year_month_from_softbank_filename(file_path.name)
+            if not year_month:
+                result.add_error("ファイル名から年月を取得できません（OID_PAY_9ATI_yyyymm.PDF形式が必要）")
+                return result
+            
             # PDFファイルからテキストを抽出
             try:
                 import PyPDF2
@@ -1258,10 +1264,11 @@ class SalesAggregator:
                 'total_sum': total_sum,
                 'payment_sum': payment_sum,
                 'calculated_performance': round(実績),
-                'calculated_information_fee': round(情報提供料)
+                'calculated_information_fee': round(情報提供料),
+                'year_month': year_month
             }
             
-            self.logger.info(f"softbank処理完了: 実績={round(実績)}, 情報提供料={round(情報提供料)}")
+            self.logger.info(f"softbank処理完了: 年月={year_month}, 実績={round(実績)}, 情報提供料={round(情報提供料)}")
             
         except Exception as e:
             result.add_error(str(e))
@@ -1272,6 +1279,21 @@ class SalesAggregator:
             result.processing_time = (end_time - start_time).total_seconds()
         
         return result
+    
+    def _extract_year_month_from_softbank_filename(self, filename: str) -> str:
+        """softbankファイル名から年月を抽出（OID_PAY_9ATI_yyyymm.PDF形式）"""
+        try:
+            # OID_PAY_9ATI_yyyymm.PDF形式から年月を抽出
+            match = re.search(r'OID_PAY_9ATI_(\d{6})\.PDF', filename, re.IGNORECASE)
+            if match:
+                return match.group(1)
+            
+            # 見つからない場合は空文字を返す
+            return ""
+            
+        except Exception as e:
+            self.logger.warning(f"softbank年月抽出エラー: {filename} - {str(e)}")
+            return ""
     
     def _extract_year_month_from_path(self, file_path: Path) -> str:
         """ファイルのパスから年月を抽出（YYYYMM形式）"""
@@ -1313,9 +1335,6 @@ class SalesAggregator:
             for file_path in files:
                 self.logger.info(f"処理中: {platform} - {file_path.name}")
                 
-                # ファイルパスから年月を取得
-                year_month = self._extract_year_month_from_path(file_path)
-                
                 if platform == 'ameba':
                     result = self.process_ameba_file(file_path)
                 elif platform == 'rakuten':
@@ -1337,6 +1356,12 @@ class SalesAggregator:
                     continue
                 
                 if result.success:
+                    # softbankの場合はファイル名から取得した年月を使用、それ以外はパスから取得
+                    if platform == 'softbank' and result.metadata and 'year_month' in result.metadata:
+                        year_month = result.metadata['year_month']
+                    else:
+                        year_month = self._extract_year_month_from_path(file_path)
+                    
                     self.results.append({
                         'platform': result.platform,
                         'file_name': result.file_name,
