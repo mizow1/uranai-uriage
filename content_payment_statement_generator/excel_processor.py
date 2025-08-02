@@ -153,7 +153,7 @@ class ExcelProcessor:
         """1つのSalesRecordを指定行に書き込み"""
         try:
             # 要求仕様に基づく新しいルール:
-            # A列：処理開始時に指定した年月
+            # A列：処理開始時に指定した年月（m月d日形式）
             # D列：プラットフォーム名  
             # G列：コンテンツ名
             # M列：target_month.csvのC列の数値分、対象年月からマイナスした年月
@@ -161,8 +161,11 @@ class ExcelProcessor:
             # Y列：該当年月の「情報提供料」額
             # W列：件数（W21セルが「件数」の場合のみ、amebaとmedibaのみ対象）
             
+            # processing_monthをm月d日形式に変換
+            formatted_payment_date = self._format_payment_date(processing_month)
+            
             # セルへの書き込み（マージセルの場合は上位セルに書き込む）
-            self._safe_write_cell(worksheet, f'A{row_num}', processing_month)       # A列：処理開始時に指定した年月
+            self._safe_write_cell(worksheet, f'A{row_num}', formatted_payment_date)  # A列：処理開始時に指定した年月（m月d日形式）
             self._safe_write_cell(worksheet, f'D{row_num}', record.platform)       # D列：プラットフォーム名
             self._safe_write_cell(worksheet, f'G{row_num}', record.content_name)   # G列：コンテンツ名
             self._safe_write_cell(worksheet, f'M{row_num}', record.target_month)   # M列：マイナスした年月
@@ -182,6 +185,23 @@ class ExcelProcessor:
         except Exception as e:
             self.logger.error(f"レコード書き込みエラー (行 {row_num}): {e}")
             raise
+    
+    def _format_payment_date(self, processing_month: str) -> str:
+        """YYYYMM形式をm月d日形式に変換"""
+        try:
+            # processing_monthをYYYYMM形式と仮定
+            year = int(processing_month[:4])
+            month = int(processing_month[4:])
+            
+            # デフォルトは5日とする（既存のロジックに合わせる）
+            day = 5
+            
+            # m月d日形式で返す
+            return f"{month}月{day}日"
+            
+        except Exception as e:
+            self.logger.error(f"支払日フォーマットエラー: {e}")
+            return processing_month  # エラー時は元の値を返す
     
     def _safe_write_cell(self, worksheet: Worksheet, cell_address: str, value) -> None:
         """セルに安全に値を書き込み（マージセル対応）"""
