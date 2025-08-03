@@ -168,7 +168,10 @@ class ExcelProcessor:
             self._safe_write_cell(worksheet, f'A{row_num}', formatted_payment_date)  # A列：処理開始時に指定した年月（m月d日形式）
             self._safe_write_cell(worksheet, f'D{row_num}', record.platform)       # D列：プラットフォーム名
             self._safe_write_cell(worksheet, f'G{row_num}', record.content_name)   # G列：コンテンツ名
-            self._safe_write_cell(worksheet, f'M{row_num}', record.target_month)   # M列：マイナスした年月
+            # M列：マイナスした年月 - デバッグ情報を追加
+            target_month_str = self._format_target_month_for_display(record.target_month)
+            self.logger.debug(f"M{row_num}列に対象年月を記入: raw={record.target_month}, formatted={target_month_str}")
+            self._safe_write_cell(worksheet, f'M{row_num}', target_month_str)   # M列：マイナスした年月
             self._safe_write_cell(worksheet, f'S{row_num}', record.performance)    # S列：実績額
             self._safe_write_cell(worksheet, f'Y{row_num}', record.information_fee) # Y列：情報提供料額
             
@@ -202,6 +205,20 @@ class ExcelProcessor:
         except Exception as e:
             self.logger.error(f"支払日フォーマットエラー: {e}")
             return processing_month  # エラー時は元の値を返す
+    
+    def _format_target_month_for_display(self, target_month: str) -> str:
+        """YYYYMM形式をYYYY年MM月形式に変換"""
+        try:
+            # target_monthをYYYYMM形式と仮定
+            year = int(target_month[:4])
+            month = int(target_month[4:])
+            
+            # YYYY年MM月形式で返す
+            return f"{year}年{month:02d}月"
+            
+        except Exception as e:
+            self.logger.error(f"対象年月フォーマットエラー: {e}")
+            return target_month  # エラー時は元の値を返す
     
     def _safe_write_cell(self, worksheet: Worksheet, cell_address: str, value) -> None:
         """セルに安全に値を書き込み（マージセル対応）"""

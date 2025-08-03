@@ -478,8 +478,13 @@ class SalesDataLoader:
             year = int(target_month[:4])
             month = int(target_month[4:])
             
+            # デバッグ情報を追加
+            self.logger.debug(f"年月計算開始: target_month={target_month}, year={year}, month={month}, offset_months={offset_months}")
+            
             # マイナス月数を加算（負の値なのでマイナスになる）
             total_months = (year * 12 + month - 1) + offset_months
+            
+            self.logger.debug(f"計算過程: ({year} * 12 + {month} - 1) + {offset_months} = {total_months}")
             
             if total_months < 0:
                 self.logger.warning(f"計算結果が負の値になりました: {target_month} + {offset_months}")
@@ -487,6 +492,8 @@ class SalesDataLoader:
             
             result_year = total_months // 12
             result_month = (total_months % 12) + 1
+            
+            self.logger.debug(f"結果計算: result_year={result_year}, result_month={result_month}")
             
             result = f"{result_year}{result_month:02d}"
             self.logger.debug(f"年月計算: {target_month} + {offset_months}ヶ月 = {result}")

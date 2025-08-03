@@ -33,7 +33,7 @@ class ConfigManager(UnifiedConfigManager):
                 'sales_data': r'C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ISP支払通知書',
                 'template_dir': r'C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ロイヤリティ\コンテンツ関連支払明細書フォーマット',
                 'output_base': r'C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ロイヤリティ',
-                'current_dir': r'C:\Users\OW\Dropbox\disk2とローカルの同期\溝口\miz\uriage'
+                'current_dir': r'C:\Users\OW\pj\uriage'
             },
             'files': {
                 'monthly_sales': '月別ISP別コンテンツ別売上.csv',
