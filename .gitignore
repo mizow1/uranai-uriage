@@ -36,3 +36,7 @@ build/
 # 自分用バックアップなど（Dropboxなどで使うなら）
 *.bak
 *~
+
+# Google OAuth認証情報
+credentials.json
+token.json
