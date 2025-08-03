@@ -115,7 +115,7 @@ class ExcelProcessor:
             if 'workbook' in locals():
                 workbook.close()
     
-    def write_statement_details(self, workbook_path: str, sales_records: List[SalesRecord], processing_month: str) -> None:
+    def write_statement_details(self, workbook_path: str, sales_records: List[SalesRecord], processing_month: str, template_name: str = None) -> None:
         """23行目以降に明細データを書き込み"""
         try:
             # Excelファイルを開く
@@ -135,7 +135,7 @@ class ExcelProcessor:
                 row_num = start_row + i
                 
                 # 各列にデータを設定
-                self._write_record_to_row(worksheet, row_num, record, processing_month, has_count_column)
+                self._write_record_to_row(worksheet, row_num, record, processing_month, has_count_column, template_name)
             
             # ファイルを保存
             workbook.save(workbook_path)
@@ -149,7 +149,7 @@ class ExcelProcessor:
             if 'workbook' in locals():
                 workbook.close()
     
-    def _write_record_to_row(self, worksheet: Worksheet, row_num: int, record: SalesRecord, processing_month: str, has_count_column: bool = False) -> None:
+    def _write_record_to_row(self, worksheet: Worksheet, row_num: int, record: SalesRecord, processing_month: str, has_count_column: bool = False, template_name: str = None) -> None:
         """1つのSalesRecordを指定行に書き込み"""
         try:
             # 要求仕様に基づく新しいルール:
@@ -161,8 +161,8 @@ class ExcelProcessor:
             # Y列：該当年月の「情報提供料」額
             # W列：件数（W21セルが「件数」の場合のみ、amebaとmedibaのみ対象）
             
-            # processing_monthをm月d日形式に変換
-            formatted_payment_date = self._format_payment_date(processing_month)
+            # processing_monthをm月d日形式に変換（テンプレート名を考慮）
+            formatted_payment_date = self._format_payment_date(processing_month, template_name)
             
             # セルへの書き込み（マージセルの場合は上位セルに書き込む）
             self._safe_write_cell(worksheet, f'A{row_num}', formatted_payment_date)  # A列：処理開始時に指定した年月（m月d日形式）
@@ -189,12 +189,41 @@ class ExcelProcessor:
             self.logger.error(f"レコード書き込みエラー (行 {row_num}): {e}")
             raise
     
-    def _format_payment_date(self, processing_month: str) -> str:
+    def _format_payment_date(self, processing_month: str, template_name: str = None) -> str:
         """YYYYMM形式をm月d日形式に変換"""
         try:
             # processing_monthをYYYYMM形式と仮定
             year = int(processing_month[:4])
             month = int(processing_month[4:])
+            
+            # テンプレート名から判定
+            if template_name:
+                template_lower = template_name.lower()
+                target_templates = ['epc', 'gaia', 'ichild', 'macalon', 'mermaid', 'shape', 'shintaku']
+                
+                if any(template in template_lower for template in target_templates):
+                    # 前月末日を計算
+                    if month == 1:
+                        prev_year = year - 1
+                        prev_month = 12
+                    else:
+                        prev_year = year
+                        prev_month = month - 1
+                    
+                    # 前月末日を取得
+                    if prev_month in [1, 3, 5, 7, 8, 10, 12]:
+                        last_day = 31
+                    elif prev_month in [4, 6, 9, 11]:
+                        last_day = 30
+                    else:  # 2月
+                        # うるう年判定
+                        if (prev_year % 4 == 0 and prev_year % 100 != 0) or (prev_year % 400 == 0):
+                            last_day = 29
+                        else:
+                            last_day = 28
+                    
+                    # m月d日形式で返す（前月末日）
+                    return f"{prev_month}月{last_day}日"
             
             # デフォルトは5日とする（既存のロジックに合わせる）
             day = 5
@@ -312,8 +341,8 @@ class ExcelProcessor:
             # 支払日を設定
             self.write_payment_date(excel_path, target_month, template_name)
             
-            # 明細データを書き込み（処理月を渡す）
-            self.write_statement_details(excel_path, sales_records, target_month)
+            # 明細データを書き込み（処理月とテンプレート名を渡す）
+            self.write_statement_details(excel_path, sales_records, target_month, template_name)
             
             self.logger.info(f"Excelファイル処理完了: {excel_path}")
             return excel_path
