@@ -27,7 +27,7 @@ aoki,rakuten,-3
 aoki,excite,-3
 aoki,ameba,-4
 aoki,mediba,-4
-aoki,line,-4
+aoki,line,-3
 aoki,docomo,
 aoki,softbank,
 aoki,au,
@@ -483,7 +483,7 @@ miyoko-syufu,rakuten,-3
 miyoko-syufu,excite,-3
 miyoko-syufu,ameba,-4
 miyoko-syufu,mediba,-4
-miyoko-syufu,line,0
+miyoko-syufu,line,-3
 miyoko-syufu,docomo,-4
 miyoko-syufu,softbank,
 miyoko-syufu,au,
@@ -491,7 +491,7 @@ miyoko-tirol,rakuten,-3
 miyoko-tirol,excite,-3
 miyoko-tirol,ameba,-4
 miyoko-tirol,mediba,-4
-miyoko-tirol,line,0
+miyoko-tirol,line,-3
 miyoko-tirol,docomo,-4
 miyoko-tirol,softbank,
 miyoko-tirol,au,
@@ -659,7 +659,7 @@ shintaku-count,rakuten,-3
 shintaku-count,excite,-3
 shintaku-count,ameba,-4
 shintaku-count,mediba,-4
-shintaku-count,line,-4
+shintaku-count,line,-3
 shintaku-count,docomo,
 shintaku-count,softbank,
 shintaku-count,au,
