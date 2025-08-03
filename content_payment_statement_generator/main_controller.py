@@ -172,7 +172,8 @@ class MainController:
                 'rate': 0.0,
                 'recipient_email': '',
                 'total_performance': 0.0,
-                'total_information_fee': 0.0
+                'total_information_fee': 0.0,
+                'total_sales_count': 0
             })
             
             # 同一プラットフォーム・同一コンテンツを集計
@@ -191,9 +192,10 @@ class MainController:
                 else:
                     self.logger.debug(f"集計キー追加: {key} - 実績:{record.performance} (累計:{agg['total_performance']}→{agg['total_performance'] + record.performance}), 情報提供料:{record.information_fee} (累計:{agg['total_information_fee']}→{agg['total_information_fee'] + record.information_fee})")
                 
-                # 実績と情報提供料を累積
+                # 実績と情報提供料、売上件数を累積
                 agg['total_performance'] += record.performance
                 agg['total_information_fee'] += record.information_fee
+                agg['total_sales_count'] += record.sales_count
             
             # 集計されたレコードをSalesRecordに変換してグループ化
             grouped_records = defaultdict(list)
@@ -208,7 +210,8 @@ class MainController:
                     target_month=agg['target_month'],
                     template_file=agg['template_file'],
                     rate=agg['rate'],
-                    recipient_email=agg['recipient_email']
+                    recipient_email=agg['recipient_email'],
+                    sales_count=agg['total_sales_count']
                 )
                 
                 # テンプレートファイル・メールアドレス別にグループ化
