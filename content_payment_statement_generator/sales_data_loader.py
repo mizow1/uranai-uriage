@@ -241,7 +241,7 @@ class SalesDataLoader:
                             self.logger.info(f"コンテンツ名が空文字のためスキップ: {content_name} ({platform})")
                             continue
                             
-                        # レートデータから料率とメールアドレスを取得
+                        # レートデータから料率とメールアドレスリストを取得
                         rate_info = self._get_rate_info(template_file, rate_data)
                         
                         # 売上件数を取得（amebaとmedibaのみ）
@@ -250,23 +250,25 @@ class SalesDataLoader:
                             sales_count = int(matching_data.get('売上件数', 0))
                             self.logger.debug(f"売上件数取得: {output_content_name} ({platform}) - 件数: {sales_count}")
                         
-                        # SalesRecordを作成（出力用コンテンツ名を使用）
-                        record = SalesRecord(
-                            platform=platform,
-                            content_name=output_content_name,  # 出力用コンテンツ名を使用（D列優先）
-                            performance=float(matching_data.get('実績', 0)),
-                            information_fee=float(matching_data.get('情報提供料', 0)),
-                            target_month=actual_target_month,  # 計算された実際の対象年月
-                            template_file=template_file,
-                            rate=rate_info['rate'],
-                            recipient_email=rate_info['email'],
-                            sales_count=sales_count  # 売上件数を設定
-                        )
-                        
-                        # デバッグ情報を追加
-                        self.logger.debug(f"SalesRecord作成: {output_content_name} ({platform}) - 実績:{record.performance}, 情報提供料:{record.information_fee}, テンプレート:{template_file}")
-                        
-                        sales_records.append(record)
+                        # 各メールアドレスに対してSalesRecordを作成
+                        for email_address in rate_info['email_addresses']:
+                            # SalesRecordを作成（出力用コンテンツ名を使用）
+                            record = SalesRecord(
+                                platform=platform,
+                                content_name=output_content_name,  # 出力用コンテンツ名を使用（D列優先）
+                                performance=float(matching_data.get('実績', 0)),
+                                information_fee=float(matching_data.get('情報提供料', 0)),
+                                target_month=actual_target_month,  # 計算された実際の対象年月
+                                template_file=template_file,
+                                rate=rate_info['rate'],
+                                recipient_email=email_address,  # 個別のメールアドレスを設定
+                                sales_count=sales_count  # 売上件数を設定
+                            )
+                            
+                            # デバッグ情報を追加
+                            self.logger.debug(f"SalesRecord作成: {output_content_name} ({platform}) - 宛先:{email_address}, 実績:{record.performance}, 情報提供料:{record.information_fee}, テンプレート:{template_file}")
+                            
+                            sales_records.append(record)
                 else:
                     # データが見つからない場合、C列（支払年月）に値があるかチェック
                     # C列に値がある場合は売上0円でも記載する
@@ -283,26 +285,28 @@ class SalesDataLoader:
                                 self.logger.info(f"コンテンツ名が空文字のためスキップ: {content_name} ({platform})")
                                 continue
                                 
-                            # レートデータから料率とメールアドレスを取得
+                            # レートデータから料率とメールアドレスリストを取得
                             rate_info = self._get_rate_info(template_file, rate_data)
                             
-                            # SalesRecordを作成（実績・情報提供料ともに0、出力用コンテンツ名を使用）
-                            record = SalesRecord(
-                                platform=platform,
-                                content_name=output_content_name,  # 出力用コンテンツ名を使用（D列優先）
-                                performance=0.0,  # 実績0円
-                                information_fee=0.0,  # 情報提供料0円
-                                target_month=actual_target_month,  # 計算された実際の対象年月
-                                template_file=template_file,
-                                rate=rate_info['rate'],
-                                recipient_email=rate_info['email'],
-                                sales_count=0  # 0円の場合は件数も0
-                            )
-                            
-                            # デバッグ情報を追加
-                            self.logger.debug(f"SalesRecord作成(0円): {output_content_name} ({platform}) - 実績:0, 情報提供料:0, テンプレート:{template_file}")
-                            
-                            sales_records.append(record)
+                            # 各メールアドレスに対してSalesRecordを作成（0円データ）
+                            for email_address in rate_info['email_addresses']:
+                                # SalesRecordを作成（実績・情報提供料ともに0、出力用コンテンツ名を使用）
+                                record = SalesRecord(
+                                    platform=platform,
+                                    content_name=output_content_name,  # 出力用コンテンツ名を使用（D列優先）
+                                    performance=0.0,  # 実績0円
+                                    information_fee=0.0,  # 情報提供料0円
+                                    target_month=actual_target_month,  # 計算された実際の対象年月
+                                    template_file=template_file,
+                                    rate=rate_info['rate'],
+                                    recipient_email=email_address,  # 個別のメールアドレスを設定
+                                    sales_count=0  # 0円の場合は件数も0
+                                )
+                                
+                                # デバッグ情報を追加
+                                self.logger.debug(f"SalesRecord作成(0円): {output_content_name} ({platform}) - 宛先:{email_address}, 実績:0, 情報提供料:0, テンプレート:{template_file}")
+                                
+                                sales_records.append(record)
                 
             except Exception as e:
                 self.logger.warning(f"レコード作成エラー (コンテンツ: {content_name}, プラットフォーム: {platform}): {e}")
@@ -441,7 +445,7 @@ class SalesDataLoader:
             return [("default_template.xlsx", content_name, [content_name])]
     
     def _get_rate_info(self, template_file: str, rate_df: pd.DataFrame) -> Dict[str, any]:
-        """レートデータから料率とメールアドレスを取得"""
+        """レートデータから料率とメールアドレスリストを取得"""
         try:
             # テンプレートファイル名（拡張子なし）で検索
             template_name = Path(template_file).stem
@@ -456,21 +460,40 @@ class SalesDataLoader:
                 # 料率を小数に変換（例：8% -> 0.08）
                 rate = float(rate_value) / 100.0 if rate_value else 0.0
                 
-                # メールアドレスはデフォルト値（rateファイルにメール列がない）
-                email = 'mizoguchi@outward.jp'  # デフォルトメールアドレス
+                # C列以降（メールアドレス列）からメールアドレスを取得
+                email_addresses = []
+                # C列以降の列をチェック（インデックス2以降）
+                for col_idx in range(2, len(row)):
+                    if col_idx < len(rate_df.columns):
+                        col_name = rate_df.columns[col_idx]
+                        email_value = row.iloc[col_idx]
+                        
+                        # 空でないメールアドレスを追加
+                        if pd.notna(email_value) and str(email_value).strip() != '':
+                            email_addr = str(email_value).strip()
+                            if email_addr:  # 空文字でない場合のみ追加
+                                email_addresses.append(email_addr)
+                                self.logger.debug(f"メールアドレス取得: {template_name} - {col_name}: {email_addr}")
+                
+                # メールアドレスが見つからない場合はデフォルト値
+                if not email_addresses:
+                    email_addresses = ['mizoguchi@outward.jp']
+                    self.logger.warning(f"メールアドレスが見つからないためデフォルト値を使用: {template_name}")
+                
+                self.logger.info(f"レート情報取得: {template_name} - 料率: {rate*100:.1f}%, メール: {email_addresses}")
                 
                 return {
                     'rate': rate,
-                    'email': email
+                    'email_addresses': email_addresses  # リストで返す
                 }
             
             # マッチしない場合はデフォルト値
             self.logger.warning(f"レート情報が見つかりません: {template_file}")
-            return {'rate': 0.0, 'email': 'mizoguchi@outward.jp'}
+            return {'rate': 0.0, 'email_addresses': ['mizoguchi@outward.jp']}
             
         except Exception as e:
             self.logger.error(f"レート情報取得エラー: {e}")
-            return {'rate': 0.0, 'email': 'mizoguchi@outward.jp'}
+            return {'rate': 0.0, 'email_addresses': ['mizoguchi@outward.jp']}
     
     def _calculate_offset_month(self, target_month: str, offset_months: int) -> str:
         """対象年月からoffset_months分マイナスした年月を計算"""
