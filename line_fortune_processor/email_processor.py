@@ -266,7 +266,8 @@ class EmailProcessor:
         """日付検索クエリを構築"""
         from datetime import datetime, timedelta
         
-        if start_date and end_date:
+        # start_dateとend_dateがNoneでないことを確認
+        if start_date is not None and end_date is not None:
             query_start_date = datetime.combine(start_date, datetime.min.time())
             # 終了日を含めるため、翌日の00:00:00を設定
             query_end_date = datetime.combine(end_date, datetime.min.time()) + timedelta(days=1)
@@ -280,7 +281,7 @@ class EmailProcessor:
         query = f'SINCE "{start_date_str}" BEFORE "{end_date_str}"'
         self.logger.info(f"生成された日付クエリ: {query}")
         self.logger.info(f"指定された日付範囲: {start_date} ～ {end_date}")
-        self.logger.info(f"クエリの実際の日付範囲: {query_start_date} ～ {query_end_date}")
+        self.logger.info(f"クエリの実際の日付範囲: {query_start_date.strftime('%Y-%m-%d')} ～ {query_end_date.strftime('%Y-%m-%d')}")
         
         return query
     

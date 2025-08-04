@@ -593,18 +593,26 @@ def main():
             except ValueError:
                 print("エラー: 日付は YYYY-MM-DD 形式で入力してください（例: 2025-07-22）")
     
-    # 対話形式で日付範囲を取得
-    print("\n" + "="*50)
-    print("LINE Fortune Email Processor")
-    print("="*50)
-    print("処理対象メールの日付範囲を指定してください")
-    
-    # 開始日の入力
-    today = date.today()
-    start_date = get_date_input("開始年月日を入力", today)
-    
-    # 終了日の入力
-    end_date = get_date_input("終了年月日を入力", start_date)
+    # ドライランモードの場合は、デフォルト日付を使用
+    if args.dry_run:
+        from datetime import date
+        today = date.today()
+        start_date = today
+        end_date = today
+        print(f"ドライランモード: デフォルト日付を使用 {start_date} ～ {end_date}")
+    else:
+        # 対話形式で日付範囲を取得
+        print("\n" + "="*50)
+        print("LINE Fortune Email Processor")
+        print("="*50)
+        print("処理対象メールの日付範囲を指定してください")
+        
+        # 開始日の入力
+        today = date.today()
+        start_date = get_date_input("開始年月日を入力", today)
+        
+        # 終了日の入力
+        end_date = get_date_input("終了年月日を入力", start_date)
     
     # 日付範囲の妥当性チェック
     if start_date > end_date:
@@ -617,18 +625,24 @@ def main():
     else:
         print(f"\n処理対象: {start_date} ～ {end_date} のメール")
     
-    confirm = input("この設定で実行しますか？ (y/N): ").strip().lower()
-    if confirm not in ['y', 'yes']:
-        print("処理を中止しました")
-        return 0
+    if args.dry_run:
+        # ドライランモードでは自動的に実行
+        print("ドライランモード: 自動実行します")
+        do_merge_csvs = False
+        do_aggregate_services = False
+    else:
+        confirm = input("この設定で実行しますか？ (y/N): ").strip().lower()
+        if confirm not in ['y', 'yes']:
+            print("処理を中止しました")
+            return 0
 
-    # CSV統合確認
-    merge_confirm = input("\nメール処理完了後、同フォルダ内のCSVファイルを統合しますか？ (y/N): ").strip().lower()
-    do_merge_csvs = merge_confirm in ['y', 'yes']
-    
-    # サービス別集計確認
-    aggregate_confirm = input("CSVファイル統合後、line-menu-yyyy-mmファイルからサービス別売上集計を行いますか？ (y/N): ").strip().lower()
-    do_aggregate_services = aggregate_confirm in ['y', 'yes']
+        # CSV統合確認
+        merge_confirm = input("\nメール処理完了後、同フォルダ内のCSVファイルを統合しますか？ (y/N): ").strip().lower()
+        do_merge_csvs = merge_confirm in ['y', 'yes']
+        
+        # サービス別集計確認
+        aggregate_confirm = input("CSVファイル統合後、line-menu-yyyy-mmファイルからサービス別売上集計を行いますか？ (y/N): ").strip().lower()
+        do_aggregate_services = aggregate_confirm in ['y', 'yes']
 
     try:
         # プロセッサーの初期化（日付範囲指定を渡す）
