@@ -157,19 +157,7 @@ class ContentPaymentEmailSender:
             
             content_info = f"（{content_name}）" if content_name else ""
             
-            body = f"""いつもお世話になっております。
-
-{formatted_month}のお支払額{content_info}をご連絡いたします。
-
-詳細につきましては、添付の支払明細書をご確認ください。
-
-何かご不明な点がございましたら、お気軽にお問い合わせください。
-
-よろしくお願いいたします。
-
----
-溝口
-mizoguchi@outward.jp"""
+            body = f"""（メール本文はemail_processor.pyで作成）"""
             
             return body
             
