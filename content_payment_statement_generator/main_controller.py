@@ -176,7 +176,7 @@ class MainController:
                 'total_sales_count': 0
             })
             
-            # 同一プラットフォーム・同一コンテンツを集計
+            # 同一プラットフォーム・同一コンテンツを集計（メールアドレスの重複を排除）
             for record in sales_records:
                 key = f"{record.platform}_{record.content_name}_{record.template_file}"
                 
@@ -188,14 +188,17 @@ class MainController:
                     agg['target_month'] = record.target_month
                     agg['rate'] = record.rate
                     agg['recipient_email'] = record.recipient_email
+                    # 初回のみ実績・情報提供料・売上件数を設定（重複を防ぐ）
+                    agg['total_performance'] = record.performance
+                    agg['total_information_fee'] = record.information_fee
+                    agg['total_sales_count'] = record.sales_count
                     self.logger.debug(f"集計キー初期化: {key} - 実績:{record.performance}, 情報提供料:{record.information_fee}")
                 else:
-                    self.logger.debug(f"集計キー追加: {key} - 実績:{record.performance} (累計:{agg['total_performance']}→{agg['total_performance'] + record.performance}), 情報提供料:{record.information_fee} (累計:{agg['total_information_fee']}→{agg['total_information_fee'] + record.information_fee})")
-                
-                # 実績と情報提供料、売上件数を累積
-                agg['total_performance'] += record.performance
-                agg['total_information_fee'] += record.information_fee
-                agg['total_sales_count'] += record.sales_count
+                    # 同一プラットフォーム・同一コンテンツのレコードは加算しない（メールアドレス分の重複を防ぐ）
+                    self.logger.debug(f"集計キー重複検出（スキップ）: {key} - 実績:{record.performance}, 情報提供料:{record.information_fee}")
+                    # メールアドレスを結合（必要に応じて）
+                    if record.recipient_email not in agg['recipient_email']:
+                        agg['recipient_email'] += f", {record.recipient_email}"
             
             # 集計されたレコードをSalesRecordに変換してグループ化
             grouped_records = defaultdict(list)
