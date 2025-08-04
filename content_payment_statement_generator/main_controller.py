@@ -295,11 +295,15 @@ class MainController:
             
             # メール下書き作成
             if send_email and self._validate_email_address(statement.recipient_email):
+                # A8セルの値を取得
+                addressee_name = self.excel_processor.get_a8_cell_value(excel_path)
+                
                 if self.email_processor.create_payment_notification_draft(
                     statement.recipient_email,
                     pdf_path,
                     target_month,
-                    statement.content_name
+                    statement.content_name,
+                    addressee_name
                 ):
                     self.statistics['sent_emails'] += 1
                     self.logger.info(f"メール下書き作成完了: {statement.recipient_email}")

@@ -321,6 +321,32 @@ class ExcelProcessor:
             self.logger.error(f"支払額計算エラー: {e}")
             return 0.0
     
+    def get_a8_cell_value(self, workbook_path: str) -> str:
+        """A8セルの値を取得"""
+        try:
+            # Excelファイルを開く
+            workbook = openpyxl.load_workbook(workbook_path)
+            worksheet = workbook.active
+            
+            # A8セルの値を取得
+            a8_value = worksheet['A8'].value
+            
+            if a8_value is None:
+                self.logger.warning("A8セルが空です")
+                return ""
+            
+            # 文字列として返す
+            a8_str = str(a8_value).strip()
+            self.logger.info(f"A8セルの値を取得: {a8_str}")
+            return a8_str
+            
+        except Exception as e:
+            self.logger.error(f"A8セル取得エラー: {e}")
+            return ""
+        finally:
+            if 'workbook' in locals():
+                workbook.close()
+
     def process_excel_file(
         self, 
         template_name: str, 

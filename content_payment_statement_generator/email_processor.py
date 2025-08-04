@@ -204,7 +204,8 @@ class EmailProcessor:
         recipient: str,
         pdf_path: str,
         target_month: str,
-        content_name: str = ""
+        content_name: str = "",
+        addressee_name: str = ""
     ) -> bool:
         """支払い通知メールを下書きとして作成"""
         try:
@@ -212,10 +213,12 @@ class EmailProcessor:
             sender = "mizoguchi@outward.jp"
             cc = "ow-fortune@ml.outward.jp"
             bcc = "mizoguchi@outward.jp"
-            subject = "今月のお支払額のご連絡"
             
-            # メール本文を作成
-            body = self._create_payment_notification_body(target_month, content_name)
+            # メール件名を作成（A6セルの値を使用）
+            subject = self._create_payment_notification_subject(target_month, addressee_name)
+            
+            # メール本文を作成（A6セルの値を使用）
+            body = self._create_payment_notification_body(target_month, content_name, addressee_name)
             
             # メールメッセージを作成
             message = self.create_message_with_attachment(
@@ -247,7 +250,8 @@ class EmailProcessor:
         recipient: str,
         pdf_path: str,
         target_month: str,
-        content_name: str = ""
+        content_name: str = "",
+        addressee_name: str = ""
     ) -> bool:
         """支払い通知メールを下書きとして作成（注意：送信はしません）"""
         try:
@@ -255,10 +259,12 @@ class EmailProcessor:
             sender = "mizoguchi@outward.jp"
             cc = "ow-fortune@ml.outward.jp"
             bcc = "mizoguchi@outward.jp"
-            subject = "今月のお支払額のご連絡"
             
-            # メール本文を作成
-            body = self._create_payment_notification_body(target_month, content_name)
+            # メール件名を作成（A6セルの値を使用）
+            subject = self._create_payment_notification_subject(target_month, addressee_name)
+            
+            # メール本文を作成（A6セルの値を使用）
+            body = self._create_payment_notification_body(target_month, content_name, addressee_name)
             
             # メールメッセージを作成
             message = self.create_message_with_attachment(
@@ -285,7 +291,26 @@ class EmailProcessor:
             self.logger.error(f"支払い通知メール下書き作成エラー: {e}")
             return False
     
-    def _create_payment_notification_body(self, target_month: str, content_name: str = "") -> str:
+    def _create_payment_notification_subject(self, target_month: str, addressee_name: str = "") -> str:
+        """支払い通知メールの件名を作成"""
+        try:
+            # 年月を表示用にフォーマット
+            year = target_month[:4]
+            month = target_month[4:]
+            
+            # 件名フォーマット: [A8セルの値] yyyy年m月お支払いのご連絡
+            if addressee_name:
+                subject = f"{year}年{int(month)}月お支払いのご連絡"
+            else:
+                subject = f"{year}年{int(month)}月お支払いのご連絡"
+            
+            return subject
+            
+        except Exception as e:
+            self.logger.error(f"メール件名作成エラー: {e}")
+            return "今月のお支払額のご連絡"
+
+    def _create_payment_notification_body(self, target_month: str, content_name: str = "", addressee_name: str = "") -> str:
         """支払い通知メールの本文を作成"""
         try:
             # 年月を表示用にフォーマット
@@ -293,7 +318,12 @@ class EmailProcessor:
             month = target_month[4:]
             formatted_month = f"{year}年{int(month)}月"
             
-            body = f"""お世話になっております。アウトワード溝口です。
+            # 宛名部分
+            greeting = f"{addressee_name}様" if addressee_name else ""
+            if greeting:
+                greeting += "\n\n"
+            
+            body = f"""{greeting}お世話になっております。アウトワード溝口です。
 
 {formatted_month}のロイヤリティ明細書をお送りいたします。
 
