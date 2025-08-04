@@ -244,9 +244,9 @@ class SalesDataLoader:
                         # レートデータから料率とメールアドレスリストを取得
                         rate_info = self._get_rate_info(template_file, rate_data)
                         
-                        # 売上件数を取得（amebaとmedibaのみ）
+                        # 売上件数を取得（ameba、mediba、rakutenのみ）
                         sales_count = 0
-                        if platform.lower() in ['ameba', 'mediba']:
+                        if platform.lower() in ['ameba', 'mediba', 'rakuten']:
                             sales_count = int(matching_data.get('売上件数', 0))
                             self.logger.debug(f"売上件数取得: {output_content_name} ({platform}) - 件数: {sales_count}")
                         

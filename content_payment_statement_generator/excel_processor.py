@@ -159,7 +159,7 @@ class ExcelProcessor:
             # M列：target_month.csvのC列の数値分、対象年月からマイナスした年月
             # S列：該当年月の「実績」額
             # Y列：該当年月の「情報提供料」額
-            # W列：件数（W21セルが「件数」の場合のみ、amebaとmedibaのみ対象）
+            # W列：件数（W21セルが「件数」の場合のみ、ameba、mediba、rakutenのみ対象）
             
             # processing_monthをm月d日形式に変換（テンプレート名を考慮）
             formatted_payment_date = self._format_payment_date(processing_month, template_name)
@@ -176,7 +176,7 @@ class ExcelProcessor:
             self._safe_write_cell(worksheet, f'Y{row_num}', record.information_fee) # Y列：情報提供料額
             
             # W列：件数（条件に合致する場合のみ）
-            if has_count_column and record.platform.lower() in ['ameba', 'mediba'] and record.sales_count > 0:
+            if has_count_column and record.platform.lower() in ['ameba', 'mediba', 'rakuten'] and record.sales_count > 0:
                 self._safe_write_cell(worksheet, f'W{row_num}', record.sales_count)
                 self.logger.debug(f"W{row_num}に件数を記入: {record.sales_count} ({record.platform})")
             

@@ -20,7 +20,7 @@ class SalesRecord:
     template_file: str
     rate: float
     recipient_email: str
-    sales_count: int = 0  # 売上件数（amebaとmedibaのみ）
+    sales_count: int = 0  # 売上件数（ameba、mediba、rakutenのみ）
 
 
 @dataclass
