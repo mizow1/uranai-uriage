@@ -222,14 +222,21 @@ class SalesDataLoader:
                 allow_zero = not pd.isna(offset_months) and str(offset_months).strip() != ''
                 
                 for template_file, output_content_name, search_candidates in template_files:
-                    # 複数の検索候補で売上データを検索
-                    for search_content in search_candidates:
-                        matching_data = self._find_matching_sales_data(merged_data, search_content, platform, allow_zero_performance=allow_zero)
+                    # miyoko-syufuのLINEプラットフォームの場合は特別処理（複数のコンテンツを合計）
+                    if content_name == 'miyoko-syufu' and platform.lower() == 'line':
+                        matching_data = self._find_and_aggregate_multiple_sales_data(merged_data, search_candidates, platform, allow_zero_performance=allow_zero)
                         if matching_data is not None:
-                            self.logger.debug(f"マッチしたコンテンツ名: {search_content}")
+                            self.logger.debug(f"複数コンテンツ合計データを取得: {search_candidates}")
                             break
-                    if matching_data is not None:
-                        break
+                    else:
+                        # 通常の処理：複数の検索候補で売上データを検索
+                        for search_content in search_candidates:
+                            matching_data = self._find_matching_sales_data(merged_data, search_content, platform, allow_zero_performance=allow_zero)
+                            if matching_data is not None:
+                                self.logger.debug(f"マッチしたコンテンツ名: {search_content}")
+                                break
+                        if matching_data is not None:
+                            break
                 
                 if matching_data is not None:
                     self.logger.info(f"マッチしたデータが見つかりました: {content_name} ({platform}) - 実績: {matching_data.get('実績', 0)}")
@@ -340,14 +347,15 @@ class SalesDataLoader:
             
             # コンテンツ名で検索
             for _, row in mapping_df.iterrows():
-                # A列（テンプレートファイル名）でまず検索
-                row_content_name = str(row.iloc[0])  # A列のコンテンツ名
+                # A列（テンプレートファイル名）とB列でも検索
+                row_content_name_a = str(row.iloc[0])  # A列のコンテンツ名
+                row_content_name_b = str(row.iloc[1]) if len(row) > 1 and pd.notna(row.iloc[1]) else None  # B列のコンテンツ名
                 platform_content = str(row.get(target_column, ''))  # プラットフォーム列の値
                 
-                self.logger.debug(f"マッピング検索: {content_name} ({platform}) vs A列='{row_content_name}', {target_column}列='{platform_content}'")
+                self.logger.debug(f"マッピング検索: {content_name} ({platform}) vs A列='{row_content_name_a}', B列='{row_content_name_b}', {target_column}列='{platform_content}'")
                 
-                # A列のコンテンツ名と一致するかチェック
-                if row_content_name == content_name:
+                # A列またはB列のコンテンツ名と一致するかチェック
+                if row_content_name_a == content_name or (row_content_name_b and row_content_name_b == content_name):
                     templates = []
                     
                     # medibaプラットフォームの場合、D列を優先して使用（出力用）、検索時はC列またはD列
@@ -413,6 +421,13 @@ class SalesDataLoader:
                         # LINEプラットフォームの場合、A列のコンテンツ名も検索候補に追加
                         if target_column.lower() == 'line' and content_name not in search_candidates:
                             search_candidates.append(content_name)
+                        
+                        # miyoko-syufuの場合、LINEプラットフォームで「miyoko」と「miyokof」も検索候補に追加
+                        if target_column.lower() == 'line' and content_name == 'miyoko-syufu':
+                            if 'miyoko' not in search_candidates:
+                                search_candidates.append('miyoko')
+                            if 'miyokof' not in search_candidates:
+                                search_candidates.append('miyokof')
                         
                         # 検索候補が空の場合はデフォルト値を使用
                         if not search_candidates:
@@ -527,6 +542,38 @@ class SalesDataLoader:
             self.logger.error(f"年月計算エラー: {e}")
             return target_month
     
+    def _find_and_aggregate_multiple_sales_data(self, merged_data: pd.DataFrame, content_names: List[str], platform: str, allow_zero_performance: bool = False) -> Optional[pd.Series]:
+        """複数のコンテンツ名の売上データを検索して合計"""
+        try:
+            aggregated_data = {
+                '実績': 0.0,
+                '情報提供料': 0.0,
+                '売上件数': 0
+            }
+            
+            found_any = False
+            
+            for content_name in content_names:
+                matching_data = self._find_matching_sales_data(merged_data, content_name, platform, allow_zero_performance)
+                if matching_data is not None:
+                    found_any = True
+                    aggregated_data['実績'] += float(matching_data.get('実績', 0))
+                    aggregated_data['情報提供料'] += float(matching_data.get('情報提供料', 0))
+                    aggregated_data['売上件数'] += int(matching_data.get('売上件数', 0))
+                    self.logger.debug(f"合計処理: {content_name} - 実績:{matching_data.get('実績', 0)}, 情報提供料:{matching_data.get('情報提供料', 0)}")
+            
+            if found_any:
+                # pd.Seriesとして返す（元のデータと同じ形式）
+                result = pd.Series(aggregated_data)
+                self.logger.info(f"複数コンテンツ合計結果: 実績:{result['実績']}, 情報提供料:{result['情報提供料']}, 売上件数:{result['売上件数']}")
+                return result
+            else:
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"複数コンテンツ売上データ合計エラー: {e}")
+            return None
+
     def _find_matching_sales_data(self, merged_data: pd.DataFrame, content_name: str, platform: str, allow_zero_performance: bool = False) -> Optional[pd.Series]:
         """統合データから該当するコンテンツとプラットフォームのデータを検索"""
         try:

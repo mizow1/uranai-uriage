@@ -73,7 +73,11 @@ class MainController:
             if template_filter:
                 filtered_statements = {}
                 for key, statement in payment_statements.items():
-                    if statement.template_file == template_filter:
+                    # テンプレートファイル名から拡張子を除いた名前で比較
+                    template_name = Path(statement.template_file).stem
+                    filter_name = Path(template_filter).stem
+                    self.logger.debug(f"フィルター比較: template_file='{statement.template_file}', template_name='{template_name}', template_filter='{template_filter}', filter_name='{filter_name}'")
+                    if template_name == filter_name:
                         filtered_statements[key] = statement
                 payment_statements = filtered_statements
                 self.logger.info(f"テンプレートフィルター適用: {template_filter} - {len(payment_statements)}件")

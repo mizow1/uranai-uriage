@@ -479,11 +479,11 @@ miku,line,
 miku,docomo,
 miku,softbank,
 miku,au,
-miyoko-syufu,rakuten,-3
-miyoko-syufu,excite,-3
-miyoko-syufu,ameba,-4
-miyoko-syufu,mediba,-4
-miyoko-syufu,line,-3
+miyoko-syufu,rakuten,
+miyoko-syufu,excite,
+miyoko-syufu,ameba,
+miyoko-syufu,mediba,
+miyoko-syufu,line,
 miyoko-syufu,docomo,-4
 miyoko-syufu,softbank,
 miyoko-syufu,au,
@@ -493,8 +493,8 @@ miyoko-tirol,ameba,-4
 miyoko-tirol,mediba,-4
 miyoko-tirol,line,-3
 miyoko-tirol,docomo,-4
-miyoko-tirol,softbank,
-miyoko-tirol,au,
+miyoko-tirol,softbank,-4
+miyoko-tirol,au,-4
 mlo,rakuten,-3
 mlo,excite,-3
 mlo,ameba,-4
