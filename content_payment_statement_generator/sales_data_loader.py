@@ -460,10 +460,10 @@ class SalesDataLoader:
                 # 料率を小数に変換（例：8% -> 0.08）
                 rate = float(rate_value) / 100.0 if rate_value else 0.0
                 
-                # C列以降（メールアドレス列）からメールアドレスを取得
+                # D列以降（メールアドレス列）からメールアドレスを取得
                 email_addresses = []
-                # C列以降の列をチェック（インデックス2以降）
-                for col_idx in range(2, len(row)):
+                # D列以降の列をチェック（インデックス3以降）
+                for col_idx in range(3, len(row)):
                     if col_idx < len(rate_df.columns):
                         col_name = rate_df.columns[col_idx]
                         email_value = row.iloc[col_idx]
