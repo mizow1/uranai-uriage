@@ -101,26 +101,33 @@ class SalesAggregator:
                                     files_by_platform['softbank'].append(file)
                             # サブフォルダも検索（LINEファイル、softbankファイル、auファイル用）
                             elif file.is_dir():
-                                for subfile in file.iterdir():
-                                    if subfile.is_file():
-                                        subfilename = subfile.name.lower()
-                                        if subfilename.startswith('line-contents-') and (subfile.suffix.lower() in ['.xls', '.xlsx', '.csv']):
-                                            files_by_platform['line'].append(subfile)
-                                        elif 'oid_pay_9ati' in subfilename and subfile.suffix.lower() == '.pdf':
-                                            files_by_platform['softbank'].append(subfile)
-                                        elif 'cp02お支払い明細書' in subfile.name and (subfile.suffix.lower() in ['.pdf', '.csv']):
-                                            files_by_platform['au'].append(subfile)
-                                    # さらに深いサブフォルダも検索（softbankファイル、auファイル用）
-                                    elif subfile.is_dir():
-                                        for subsubfile in subfile.iterdir():
-                                            if subsubfile.is_file():
-                                                subsubfilename = subsubfile.name.lower()
-                                                if 'oid_pay_9ati' in subsubfilename and subsubfile.suffix.lower() == '.pdf':
-                                                    files_by_platform['softbank'].append(subsubfile)
-                                                elif 'cp02お支払い明細書' in subsubfile.name and (subsubfile.suffix.lower() in ['.pdf', '.csv']):
-                                                    files_by_platform['au'].append(subsubfile)
+                                self._search_files_recursively(file, files_by_platform, max_depth=4)
         
         return files_by_platform
+    
+    def _search_files_recursively(self, directory: Path, files_by_platform: dict, max_depth: int, current_depth: int = 1):
+        """指定したディレクトリを再帰的に検索してファイルを見つける"""
+        if current_depth > max_depth:
+            return
+        
+        try:
+            for item in directory.iterdir():
+                if item.is_file():
+                    filename = item.name.lower()
+                    # LINEファイルの検索
+                    if filename.startswith('line-contents-') and (item.suffix.lower() in ['.xls', '.xlsx', '.csv']):
+                        files_by_platform['line'].append(item)
+                    # SoftBankファイルの検索
+                    elif 'oid_pay_9ati' in filename and item.suffix.lower() == '.pdf':
+                        files_by_platform['softbank'].append(item)
+                    # auファイルの検索
+                    elif 'cp02お支払い明細書' in item.name and (item.suffix.lower() in ['.pdf', '.csv']):
+                        files_by_platform['au'].append(item)
+                elif item.is_dir():
+                    # 再帰的にサブディレクトリを検索
+                    self._search_files_recursively(item, files_by_platform, max_depth, current_depth + 1)
+        except (PermissionError, OSError) as e:
+            self.logger.warning(f"ディレクトリアクセスエラー: {directory} - {str(e)}")
     
     def process_ameba_file(self, file_path: Path) -> ProcessingResult:
         """ameba占い（SATORI実績）ファイルを処理"""
@@ -1206,43 +1213,79 @@ class SalesAggregator:
             
             self.logger.log_file_operation("読み込み", file_path, True)
             
-            # 改善された金額抽出パターン（softbankファイル用）
-            # テスト結果から「8,176」のような金額を抽出できるパターンを使用
-            amount_patterns = [
-                r'(\d{1,3}(?:,\d{3})*)[円～\s]*',  # カンマ区切りの数字
-                r'合計金額[:：\s]*(\d{1,3}(?:,\d{3})*)',
-                r'お支払い金額[:：\s]*(\d{1,3}(?:,\d{3})*)',
-                r'(\d+)'  # 数字のみ
+            # SoftBank PDF用の金額抽出パターン
+            # 「＜④合計＞①＋②＋③」の「合計金額」と「お支払い金額」を別々に抽出
+            
+            # 合計金額の抽出
+            total_amount_patterns = [
+                r'＜④合計＞[^0-9]*合計金額[^0-9]*(\d{1,3}(?:,\d{3})*)',
+                r'合計金額[^0-9]*(\d{1,3}(?:,\d{3})*)',
+                r'④合計[^0-9]*(\d{1,3}(?:,\d{3})*)'
             ]
             
-            # 最低1つの妥当な金額を抽出
-            found_amounts = []
-            for pattern in amount_patterns:
+            # お支払い金額の抽出
+            payment_amount_patterns = [
+                r'お支払い金額[^0-9]*(\d{1,3}(?:,\d{3})*)',
+                r'支払い金額[^0-9]*(\d{1,3}(?:,\d{3})*)'
+            ]
+            
+            # 合計金額を抽出
+            total_sum = None
+            for pattern in total_amount_patterns:
                 matches = re.findall(pattern, text_content, re.MULTILINE)
-                for match in matches:
+                if matches:
                     try:
-                        amount_numeric = float(str(match).replace(',', ''))
-                        if amount_numeric > 1000:  # 妥当な金額（1000円以上）
-                            found_amounts.append(amount_numeric)
+                        total_sum = float(str(matches[0]).replace(',', ''))
+                        self.logger.info(f"合計金額抽出成功: {total_sum}")
+                        break
                     except ValueError:
                         continue
-                if found_amounts:
-                    self.logger.info(f"softbank金額抽出成功 パターン: {pattern}, 結果: {matches[:3]}")
-                    break
             
-            if not found_amounts:
-                result.add_error("妥当な金額が見つかりません")
-                return result
+            # お支払い金額を抽出
+            payment_sum = None
+            for pattern in payment_amount_patterns:
+                matches = re.findall(pattern, text_content, re.MULTILINE)
+                if matches:
+                    try:
+                        payment_sum = float(str(matches[0]).replace(',', ''))
+                        self.logger.info(f"お支払い金額抽出成功: {payment_sum}")
+                        break
+                    except ValueError:
+                        continue
             
-            # 最初の妥当な金額を使用（通常は最大の金額）
-            main_amount = max(found_amounts)
+            # どちらも見つからない場合は従来の方法でフォールバック
+            if total_sum is None or payment_sum is None:
+                self.logger.warning("専用パターンで抽出できないため、従来方法でフォールバック")
+                amount_patterns = [
+                    r'(\d{1,3}(?:,\d{3})*)[円～\s]*',
+                    r'(\d+)'
+                ]
+                
+                found_amounts = []
+                for pattern in amount_patterns:
+                    matches = re.findall(pattern, text_content, re.MULTILINE)
+                    for match in matches:
+                        try:
+                            amount_numeric = float(str(match).replace(',', ''))
+                            if amount_numeric > 1000:
+                                found_amounts.append(amount_numeric)
+                        except ValueError:
+                            continue
+                    if found_amounts:
+                        break
+                
+                if not found_amounts:
+                    result.add_error("妥当な金額が見つかりません")
+                    return result
+                
+                # フォールバック時は最大値を両方に使用
+                main_amount = max(found_amounts)
+                if total_sum is None:
+                    total_sum = main_amount
+                if payment_sum is None:
+                    payment_sum = main_amount
             
-            # softbankファイルの仕様に基づく計算
-            # 金額をそのまま実績とし、実績の30%を情報提供料とする（仮の計算）
-            total_sum = main_amount
-            payment_sum = main_amount  # 同じ値を使用
-            
-            # 「合計金額」の合計に1.1を除算した値が「実績」
+            # 「合計金額」に1.1を乗算した値が「実績」
             実績 = total_sum / 1.1
             # 「お支払い金額」から1.1を除算したものが「情報提供料」
             情報提供料 = payment_sum / 1.1
@@ -1258,15 +1301,23 @@ class SalesAggregator:
             # 合計を計算
             result.calculate_totals()
             result.success = True
-            result.metadata = {
-                'amounts_found': len(found_amounts),
-                'main_amount': main_amount,
+            
+            # メタデータを設定（found_amountsとmain_amountが存在する場合のみ含める）
+            metadata = {
                 'total_sum': total_sum,
                 'payment_sum': payment_sum,
                 'calculated_performance': round(実績),
                 'calculated_information_fee': round(情報提供料),
                 'year_month': year_month
             }
+            
+            # フォールバック処理で変数が定義された場合のみ追加
+            if 'found_amounts' in locals():
+                metadata['amounts_found'] = len(found_amounts)
+            if 'main_amount' in locals():
+                metadata['main_amount'] = main_amount
+                
+            result.metadata = metadata
             
             self.logger.info(f"softbank処理完了: 年月={year_month}, 実績={round(実績)}, 情報提供料={round(情報提供料)}")
             
@@ -1329,6 +1380,15 @@ class SalesAggregator:
         
         total_files = sum(len(files) for files in files_by_platform.values())
         self.logger.info(f"処理対象ファイル数: {total_files}")
+        
+        # デバッグ: プラットフォーム別ファイル数を出力
+        for platform, files in files_by_platform.items():
+            if files:
+                self.logger.info(f"{platform}ファイル検出: {len(files)}件")
+                for file in files[:3]:  # 最初の3件のみ表示
+                    self.logger.info(f"  - {file}")
+            else:
+                self.logger.warning(f"{platform}ファイル: 0件")
         
         # プラットフォーム別にファイルを処理
         for platform, files in files_by_platform.items():
