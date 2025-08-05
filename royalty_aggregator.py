@@ -142,29 +142,43 @@ class RoyaltyAggregator:
                                 # IF文以外の数式の場合は計算値を使用
                                 ac_value = ac_value_data if isinstance(ac_value_data, (int, float)) else 0
                         else:
-                            # 数式がない場合は計算値を使用
-                            ac_value = ac_value_data if isinstance(ac_value_data, (int, float)) else 0
+                            # 数式がない場合は計算値を使用、Noneの場合はY値から推定
+                            if ac_value_data is None and y_value > 0:
+                                # Y値が正の場合、ファイル名から料率を推定
+                                filename = os.path.basename(file_path)
+                                name = self.extract_name_from_filename(filename)
+                                matching_row = self.rate_data[self.rate_data['名称'] == name]
+                                if not matching_row.empty:
+                                    rate = matching_row.iloc[0]['料率（％）']
+                                    if pd.notna(rate) and isinstance(rate, (int, float)):
+                                        ac_value = rate
+                                    else:
+                                        ac_value = 10  # デフォルト料率
+                                else:
+                                    ac_value = 10  # デフォルト料率
+                            else:
+                                ac_value = ac_value_data if isinstance(ac_value_data, (int, float)) else 0
                         
-                        # AE{row}の計算: Y{row} * AC{row} * 0.01
-                        ae_value = y_value * ac_value * 0.01
+                        # AE{row}の計算: ROUND(Y{row} * AC{row} * 0.01, 0)
+                        ae_value = round(y_value * ac_value * 0.01)
                         ae_sum += ae_value
                         found_values.append(f"Y{row}={y_value}, AC{row}={ac_value}(formula:{ac_cell.value}) -> AE{row}={ae_value}")
                 
                 if found_values:
                     print(f"    計算された売上データ: {found_values[:5]}{'...' if len(found_values) > 5 else ''} (合計{len(found_values)}個)")
                 
-                # 計算ロジック: AE23:AJ58の合計 - (10.21%の四捨五入) + (10%の四捨五入) 
+                # 計算ロジック: M19 - S19 + Y19 (S19は0と仮定、Y19=ROUND(M19*10%,0))
                 if ae_sum > 0:
-                    # 10.21%を四捨五入 (S19の計算)
-                    minus_value = round(ae_sum * 0.1021)
-                    # 10%を四捨五入 (Y19の計算)
-                    plus_value = round(ae_sum * 0.10)
-                    # 最終計算値 (AE19の計算: M19 - S19 + Y19)
-                    calculated_value = ae_sum - minus_value + plus_value
-                    # 小数点第一位で四捨五入
-                    final_value = round(calculated_value, 1)
+                    # M19 = ae_sum (AE23:AJ58の合計)
+                    m19 = ae_sum
+                    # S19 = 0 (数式がNoneのため)
+                    s19 = 0
+                    # Y19 = ROUND(M19*10%, 0)
+                    y19 = round(m19 * 0.10)
+                    # AE19 = M19 - S19 + Y19
+                    final_value = round(m19 - s19 + y19)
                     
-                    print(f"  {os.path.basename(file_path)}: AE合計={ae_sum}, -10.21%={minus_value}, +10%={plus_value}, 最終値={final_value}円")
+                    print(f"  {os.path.basename(file_path)}: M19={m19}, S19={s19}, Y19={y19}, 最終値={final_value}円")
                     
                     workbook_formula.close()
                     workbook_data.close()
