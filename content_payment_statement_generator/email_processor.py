@@ -6,6 +6,7 @@ Gmail APIを使用したメール送信と予約機能を提供します。
 
 import os
 import base64
+import csv
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
@@ -42,6 +43,10 @@ class EmailProcessor:
         self.credentials_path = credentials_path
         self.token_path = token_path
         self.gmail_service = None
+        self.contents_mapping = {}
+        
+        # コンテンツマッピングを読み込み
+        self._load_contents_mapping()
         
         if GOOGLE_APIS_AVAILABLE:
             try:
@@ -50,6 +55,74 @@ class EmailProcessor:
                 self.logger.error(f"Gmail API初期化エラー: {e}")
         else:
             self.logger.warning("Google API libraries not available")
+    
+    def _load_contents_mapping(self) -> None:
+        """contents_mapping.csvからコンテンツマッピングを読み込み"""
+        try:
+            csv_path = Path(__file__).parent.parent / 'contents_mapping.csv'
+            if not csv_path.exists():
+                self.logger.warning(f"contents_mapping.csvが見つかりません: {csv_path}")
+                return
+            
+            with open(csv_path, 'r', encoding='utf-8-sig') as f:
+                reader = csv.reader(f)
+                headers = next(reader)
+                
+                for row in reader:
+                    if len(row) >= 7:  # 最低7列必要（A-G列）
+                        content_id = row[0]  # A列
+                        mediba_name = row[3]  # D列
+                        ameba_name = row[5]   # F列
+                        rakuten_name = row[6] # G列
+                        
+                        self.contents_mapping[content_id] = {
+                            'mediba': mediba_name,
+                            'ameba': ameba_name,
+                            'rakuten': rakuten_name
+                        }
+                        
+                        # デバッグ用ログ（最初の5件のみ）
+                        if len(self.contents_mapping) <= 5:
+                            self.logger.debug(f"コンテンツID '{content_id}': mediba='{mediba_name}', ameba='{ameba_name}', rakuten='{rakuten_name}'")
+            
+            self.logger.info(f"コンテンツマッピングを読み込みました: {len(self.contents_mapping)}件")
+            
+        except Exception as e:
+            self.logger.error(f"コンテンツマッピング読み込みエラー: {e}")
+    
+    def _get_content_name_for_subject(self, content_id: str) -> str:
+        """件名用のコンテンツ名を取得（優先順位：ameba > mediba > rakuten）"""
+        try:
+            self.logger.debug(f"コンテンツ名を検索中: '{content_id}'")
+            self.logger.debug(f"利用可能なコンテンツID: {list(self.contents_mapping.keys())[:5]}...")  # 最初の5件のみ表示
+            
+            if content_id not in self.contents_mapping:
+                self.logger.warning(f"コンテンツID '{content_id}' がマッピングに見つかりません")
+                return ""
+            
+            mapping = self.contents_mapping[content_id]
+            self.logger.debug(f"マッピング内容: {mapping}")
+            
+            # 優先順位：F列（ameba）> D列（mediba）> G列（rakuten）
+            if mapping['ameba'] and mapping['ameba'].strip():
+                result = mapping['ameba'].strip()
+                self.logger.debug(f"amebaから取得: '{result}'")
+                return result
+            elif mapping['mediba'] and mapping['mediba'].strip():
+                result = mapping['mediba'].strip()
+                self.logger.debug(f"medibaから取得: '{result}'")
+                return result
+            elif mapping['rakuten'] and mapping['rakuten'].strip():
+                result = mapping['rakuten'].strip()
+                self.logger.debug(f"rakutenから取得: '{result}'")
+                return result
+            else:
+                self.logger.debug("すべての列が空でした")
+                return ""
+                
+        except Exception as e:
+            self.logger.error(f"コンテンツ名取得エラー: {e}")
+            return ""
     
     def _setup_gmail_service(self) -> Optional[Any]:
         """Gmail APIサービスを設定"""
@@ -205,7 +278,8 @@ class EmailProcessor:
         pdf_path: str,
         target_month: str,
         content_name: str = "",
-        addressee_name: str = ""
+        addressee_name: str = "",
+        content_id: str = ""
     ) -> bool:
         """支払い通知メールを下書きとして作成"""
         try:
@@ -214,8 +288,8 @@ class EmailProcessor:
             cc = "ow-fortune@ml.outward.jp"
             bcc = "mizoguchi@outward.jp"
             
-            # メール件名を作成（A6セルの値を使用）
-            subject = self._create_payment_notification_subject(target_month, addressee_name)
+            # メール件名を作成（コンテンツ名を含む）
+            subject = self._create_payment_notification_subject(target_month, addressee_name, content_id)
             
             # メール本文を作成（A6セルの値を使用）
             body = self._create_payment_notification_body(target_month, content_name, addressee_name)
@@ -251,7 +325,8 @@ class EmailProcessor:
         pdf_path: str,
         target_month: str,
         content_name: str = "",
-        addressee_name: str = ""
+        addressee_name: str = "",
+        content_id: str = ""
     ) -> bool:
         """支払い通知メールを下書きとして作成（注意：送信はしません）"""
         try:
@@ -260,8 +335,8 @@ class EmailProcessor:
             cc = "ow-fortune@ml.outward.jp"
             bcc = "mizoguchi@outward.jp"
             
-            # メール件名を作成（A6セルの値を使用）
-            subject = self._create_payment_notification_subject(target_month, addressee_name)
+            # メール件名を作成（コンテンツ名を含む）
+            subject = self._create_payment_notification_subject(target_month, addressee_name, content_id)
             
             # メール本文を作成（A6セルの値を使用）
             body = self._create_payment_notification_body(target_month, content_name, addressee_name)
@@ -291,18 +366,31 @@ class EmailProcessor:
             self.logger.error(f"支払い通知メール下書き作成エラー: {e}")
             return False
     
-    def _create_payment_notification_subject(self, target_month: str, addressee_name: str = "") -> str:
+    def _create_payment_notification_subject(self, target_month: str, addressee_name: str = "", content_id: str = "") -> str:
         """支払い通知メールの件名を作成"""
         try:
             # 年月を表示用にフォーマット
             year = target_month[:4]
             month = target_month[4:]
             
-            # 件名フォーマット: [A8セルの値] yyyy年m月お支払いのご連絡
-            if addressee_name:
-                subject = f"{year}年{int(month)}月お支払いのご連絡"
+            # 基本の件名
+            base_subject = f"{year}年{int(month)}月お支払いのご連絡"
+            
+            # コンテンツ名を取得
+            content_name_for_subject = ""
+            if content_id and content_id.strip():
+                content_name_for_subject = self._get_content_name_for_subject(content_id.strip())
+                self.logger.info(f"コンテンツID '{content_id}' からコンテンツ名 '{content_name_for_subject}' を取得")
             else:
-                subject = f"{year}年{int(month)}月お支払いのご連絡"
+                self.logger.warning(f"コンテンツIDが空またはNone: '{content_id}'")
+            
+            # 件名にコンテンツ名を追加
+            if content_name_for_subject:
+                subject = f"{base_subject}【{content_name_for_subject}】"
+                self.logger.info(f"件名にコンテンツ名を追加: {subject}")
+            else:
+                subject = base_subject
+                self.logger.info(f"コンテンツ名なしの件名: {subject}")
             
             return subject
             

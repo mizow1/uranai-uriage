@@ -306,7 +306,8 @@ class MainController:
                     pdf_path,
                     target_month,
                     statement.content_name,
-                    addressee_name
+                    addressee_name,
+                    statement.content_name  # content_idとしてcontent_nameを使用
                 ):
                     self.statistics['sent_emails'] += 1
                     self.logger.info(f"メール下書き作成完了: {statement.recipient_email}")
