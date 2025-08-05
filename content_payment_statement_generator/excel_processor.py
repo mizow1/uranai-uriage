@@ -36,11 +36,12 @@ class ExcelProcessor:
             # 出力ファイル名を生成
             template_file = Path(template_path)
             if content_name:
-                # コンテンツ名が指定されている場合: YYYYMM_content.xlsx
-                output_filename = f"{target_month}_{content_name}.xlsx"
+                # コンテンツ名が指定されている場合: content_YYYYMM.xlsx
+                output_filename = f"{content_name}_{target_month}.xlsx"
             else:
-                # コンテンツ名が指定されていない場合: YYYYMM_元ファイル名
-                output_filename = f"{target_month}_{template_file.name}"
+                # コンテンツ名が指定されていない場合: 元ファイル名_YYYYMM.xlsx
+                base_name = template_file.stem  # 拡張子を除いたファイル名
+                output_filename = f"{base_name}_{target_month}.xlsx"
             output_file_path = Path(output_path) / output_filename
             
             # ディレクトリを作成
