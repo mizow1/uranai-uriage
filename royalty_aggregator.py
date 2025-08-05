@@ -14,39 +14,37 @@ import os
 import pandas as pd
 import glob
 from datetime import datetime
-import openpyxl
-import openpyxl.utils
+import xlwings as xw
 from pathlib import Path
 import re
 import csv
+import time
+from openpyxl import load_workbook
+import pywintypes
+import argparse
+import sys
 
 class RoyaltyAggregator:
-    def __init__(self, royalty_dir, rate_csv_path, output_path):
+    def __init__(self, royalty_dir, rate_csv_path, output_path, target_yyyymm=None):
         self.royalty_dir = royalty_dir
         self.rate_csv_path = rate_csv_path
         self.output_path = output_path
+        self.target_yyyymm = target_yyyymm
         self.rate_data = None
-        self.agent_groups = {}
-        self.monthly_totals = {}
-        self.cumulative_totals = {}
+        self.content_names = []
+        self.monthly_data = {}
         
     def load_rate_data(self):
-        """rate.csvを読み込み、エージェントグループを作成"""
+        """rate.csvを読み込み、コンテンツ名リストを作成"""
         try:
             self.rate_data = pd.read_csv(self.rate_csv_path, encoding='utf-8')
             print(f"Rate data loaded: {len(self.rate_data)} records")
             print(f"Columns: {list(self.rate_data.columns)}")
             
-            # エージェントグループを作成（エージェント列でグループ化）
-            for _, row in self.rate_data.iterrows():
-                name = row['名称']
-                agent = row['エージェント']
-                if pd.notna(agent) and agent.strip():
-                    if agent not in self.agent_groups:
-                        self.agent_groups[agent] = []
-                    self.agent_groups[agent].append(name)
+            # rate.csvの順番でコンテンツ名リストを作成
+            self.content_names = self.rate_data['名称'].tolist()
+            print(f"Content names: {len(self.content_names)} items")
             
-            print(f"Agent groups created: {list(self.agent_groups.keys())}")
             return True
         except Exception as e:
             print(f"Error loading rate data: {e}")
@@ -57,6 +55,20 @@ class RoyaltyAggregator:
         folders = []
         pattern = re.compile(r'^\d{6}$')  # 6桁の数字
         
+        # 特定年月が指定されている場合
+        if self.target_yyyymm:
+            if pattern.match(self.target_yyyymm):
+                folder_path = os.path.join(self.royalty_dir, self.target_yyyymm)
+                if os.path.isdir(folder_path):
+                    folders.append(self.target_yyyymm)
+                    print(f"Target YYYYMM folder: {self.target_yyyymm}")
+                else:
+                    print(f"Specified folder not found: {self.target_yyyymm}")
+            else:
+                print(f"Invalid YYYYMM format: {self.target_yyyymm}")
+            return folders
+        
+        # 全年月を処理する場合
         for item in os.listdir(self.royalty_dir):
             if pattern.match(item):
                 folder_path = os.path.join(self.royalty_dir, item)
@@ -67,141 +79,98 @@ class RoyaltyAggregator:
         print(f"Found YYYYMM folders: {folders}")
         return folders
     
-    def read_sales_from_xlsx(self, file_path):
-        """xlsxファイルから売上データを読み取り（AE19の数式を評価）"""
+    def read_sales_from_xlsx_with_openpyxl(self, file_path):
+        """openpyxlを使ってxlsxファイルのAE19セルから売上データを読み取り"""
         try:
-            # まず数式を含んだ状態でブックを読み込み
-            workbook_formula = openpyxl.load_workbook(file_path, data_only=False)
-            worksheet_formula = workbook_formula.active
+            wb = load_workbook(file_path, read_only=True)
+            ws = wb.active
+            ae19_value = ws['AE19'].value
+            wb.close()
             
-            # 次に計算値のみでブックを読み込み
-            workbook_data = openpyxl.load_workbook(file_path, data_only=True)
-            worksheet_data = workbook_data.active
-            
-            # AE19セル（31列目、19行目）の処理
-            ae19_cell = worksheet_formula.cell(row=19, column=31)
-            ae19_value = worksheet_data.cell(row=19, column=31).value
-            
-            print(f"  AE19セル - 数式: {ae19_cell.value}, 計算値: {ae19_value}")
-            
-            # AE19が数式の場合、数式の参照先を直接評価
-            if ae19_cell.value and isinstance(ae19_cell.value, str) and ae19_cell.value.startswith('='):
-                print(f"  AE19は数式です: {ae19_cell.value}")
-                
-                # M19が実際には=SUM(AE23:AJ58)のような数式なので、直接AE23:AJ58を計算
-                # M19の数式を確認
-                m19_cell = worksheet_formula.cell(row=19, column=13)
-                print(f"    M19の数式: {m19_cell.value}")
-                
-                # AE23:AE58の数式を手動で計算する
-                # AE{row} = IF(OR(Y{row}="", AC{row}=""), "", IF(Y{row}*AC{row}*0.01=0, "", Y{row}*AC{row}*0.01))
-                # AC{row} = IF(Y{row}>0,10,"")
-                ae_sum = 0
-                found_values = []
-                
-                for row in range(23, 59):  # 23-58行目
-                    y_value = worksheet_data.cell(row=row, column=25).value  # Y列 = 25列目
-                    
-                    if isinstance(y_value, (int, float)) and y_value > 0:
-                        # AC列の数式を取得して評価
-                        ac_cell = worksheet_formula.cell(row=row, column=29)  # AC列の数式
-                        ac_value_data = worksheet_data.cell(row=row, column=29).value  # AC列の計算値
-                        
-                        # AC列の数式がある場合は数式を解析、ない場合は計算値を使用
-                        if ac_cell.value and isinstance(ac_cell.value, str) and ac_cell.value.startswith('='):
-                            # 数式の場合、手動で評価
-                            formula = ac_cell.value
-                            print(f"      AC{row}の数式: {formula}")
-                            
-                            if 'IF(' in formula.upper():
-                                # IF文の解析
-                                import re
-                                # IF(condition, true_value, false_value) のパターンを抽出
-                                if_match = re.search(r'IF\(([^,]+),([^,]+),([^)]+)\)', formula.upper())
-                                if if_match:
-                                    condition = if_match.group(1).strip()
-                                    true_value = if_match.group(2).strip()
-                                    false_value = if_match.group(3).strip()
-                                    
-                                    # 条件を評価（Y{row}>0 のような条件）
-                                    if f'Y{row}' in condition.upper() and '>' in condition:
-                                        if y_value > 0:
-                                            # true_valueを数値に変換
-                                            try:
-                                                ac_value = float(true_value)
-                                            except:
-                                                ac_value = 10  # デフォルト値
-                                        else:
-                                            ac_value = 0
-                                    else:
-                                        # その他の条件の場合は計算値を使用
-                                        ac_value = ac_value_data if isinstance(ac_value_data, (int, float)) else 0
-                                else:
-                                    ac_value = ac_value_data if isinstance(ac_value_data, (int, float)) else 0
-                            else:
-                                # IF文以外の数式の場合は計算値を使用
-                                ac_value = ac_value_data if isinstance(ac_value_data, (int, float)) else 0
-                        else:
-                            # 数式がない場合は計算値を使用、Noneの場合はY値から推定
-                            if ac_value_data is None and y_value > 0:
-                                # Y値が正の場合、ファイル名から料率を推定
-                                filename = os.path.basename(file_path)
-                                name = self.extract_name_from_filename(filename)
-                                matching_row = self.rate_data[self.rate_data['名称'] == name]
-                                if not matching_row.empty:
-                                    rate = matching_row.iloc[0]['料率（％）']
-                                    if pd.notna(rate) and isinstance(rate, (int, float)):
-                                        ac_value = rate
-                                    else:
-                                        ac_value = 10  # デフォルト料率
-                                else:
-                                    ac_value = 10  # デフォルト料率
-                            else:
-                                ac_value = ac_value_data if isinstance(ac_value_data, (int, float)) else 0
-                        
-                        # AE{row}の計算: ROUND(Y{row} * AC{row} * 0.01, 0)
-                        ae_value = round(y_value * ac_value * 0.01)
-                        ae_sum += ae_value
-                        found_values.append(f"Y{row}={y_value}, AC{row}={ac_value}(formula:{ac_cell.value}) -> AE{row}={ae_value}")
-                
-                if found_values:
-                    print(f"    計算された売上データ: {found_values[:5]}{'...' if len(found_values) > 5 else ''} (合計{len(found_values)}個)")
-                
-                # 計算ロジック: M19 - S19 + Y19 (S19は0と仮定、Y19=ROUND(M19*10%,0))
-                if ae_sum > 0:
-                    # M19 = ae_sum (AE23:AJ58の合計)
-                    m19 = ae_sum
-                    # S19 = 0 (数式がNoneのため)
-                    s19 = 0
-                    # Y19 = ROUND(M19*10%, 0)
-                    y19 = round(m19 * 0.10)
-                    # AE19 = M19 - S19 + Y19
-                    final_value = round(m19 - s19 + y19)
-                    
-                    print(f"  {os.path.basename(file_path)}: M19={m19}, S19={s19}, Y19={y19}, 最終値={final_value}円")
-                    
-                    workbook_formula.close()
-                    workbook_data.close()
-                    return final_value
-                else:
-                    print(f"  AE23:AJ58範囲に有効な数値が見つかりませんでした")
-                    
-            elif ae19_value is not None and isinstance(ae19_value, (int, float)):
-                # AE19が直接数値の場合
-                print(f"  AE19は数値です: {ae19_value}")
-                workbook_formula.close()
-                workbook_data.close()
-                return ae19_value
+            if ae19_value is not None and isinstance(ae19_value, (int, float)):
+                print(f"  {os.path.basename(file_path)}: AE19={ae19_value}円 (openpyxl)")
+                return int(ae19_value)
             else:
-                print(f"  AE19に有効な値が見つかりませんでした")
-            
-            workbook_formula.close()
-            workbook_data.close()
-            return 0
-            
+                print(f"  {os.path.basename(file_path)}: AE19に有効な値がありません (openpyxl)")
+                return 0
+                
         except Exception as e:
-            print(f"Error reading {file_path}: {e}")
+            print(f"Error reading with openpyxl {file_path}: {e}")
             return 0
+
+    def read_sales_from_xlsx_with_xlwings(self, file_path, retry_count=0, max_retries=3):
+        """xlwingsを使ってxlsxファイルのAE19セルから売上データを読み取り（リトライ機能付き）"""
+        app = None
+        wb = None
+        
+        try:
+            # Excelアプリケーションを起動
+            app = xw.App(visible=False, add_book=False)
+            # ワークブックを開く
+            wb = app.books.open(file_path)
+            ws = wb.sheets[0]
+            
+            # AE19セルの値を取得
+            ae19_value = ws.range('AE19').value
+            
+            # ワークブックを閉じる
+            wb.close()
+            # アプリケーションを終了
+            app.quit()
+            
+            if ae19_value is not None and isinstance(ae19_value, (int, float)):
+                print(f"  {os.path.basename(file_path)}: AE19={ae19_value}円 (xlwings)")
+                return int(ae19_value)
+            else:
+                print(f"  {os.path.basename(file_path)}: AE19に有効な値がありません (xlwings)")
+                return 0
+            
+        except pywintypes.com_error as com_err:
+            # COMエラーの場合
+            error_code = com_err.args[0] if com_err.args else "Unknown"
+            error_msg = com_err.args[1] if len(com_err.args) > 1 else "Unknown COM error"
+            
+            print(f"COM Error reading {file_path}: ({error_code}) {error_msg}")
+            
+            # クリーンアップ
+            try:
+                if wb:
+                    wb.close()
+                if app:
+                    app.quit()
+            except:
+                pass
+            
+            # リトライ判定
+            if retry_count < max_retries and error_code in [-2147023170, -2147023174]:
+                print(f"  Retrying ({retry_count + 1}/{max_retries})...")
+                time.sleep(2)  # 2秒待機
+                return self.read_sales_from_xlsx_with_xlwings(file_path, retry_count + 1, max_retries)
+            else:
+                print(f"  Max retries reached, switching to openpyxl...")
+                return self.read_sales_from_xlsx_with_openpyxl(file_path)
+                
+        except Exception as e:
+            print(f"General error reading {file_path}: {e}")
+            # クリーンアップ
+            try:
+                if wb:
+                    wb.close()
+                if app:
+                    app.quit()
+            except:
+                pass
+            
+            # 一般的なエラーの場合もopenpyxlを試す
+            if retry_count == 0:
+                print(f"  Switching to openpyxl...")
+                return self.read_sales_from_xlsx_with_openpyxl(file_path)
+            return 0
+
+    def read_sales_from_xlsx(self, file_path):
+        """xlsxファイルのAE19セルから売上データを読み取り（メインメソッド）"""
+        # まずxlwingsを試し、失敗したらopenpyxlを使用
+        return self.read_sales_from_xlsx_with_xlwings(file_path)
     
     def extract_name_from_filename(self, filename):
         """ファイル名から名称を抽出"""
@@ -228,7 +197,7 @@ class RoyaltyAggregator:
             return
         
         print(f"Processing {yyyymm}...")
-        monthly_agent_totals = {}
+        monthly_content_data = {}
         
         # フォルダ内のxlsxファイルを処理
         xlsx_files = glob.glob(os.path.join(folder_path, "*.xlsx"))
@@ -238,46 +207,20 @@ class RoyaltyAggregator:
             name = self.extract_name_from_filename(filename)
             sales_value = self.read_sales_from_xlsx(file_path)
             
-            if sales_value > 0:
-                # rate.csvで対応するエージェントを検索
-                matching_row = self.rate_data[self.rate_data['名称'] == name]
-                if not matching_row.empty:
-                    agent = matching_row.iloc[0]['エージェント']
-                    if pd.notna(agent) and agent.strip():
-                        if agent not in monthly_agent_totals:
-                            monthly_agent_totals[agent] = 0
-                        monthly_agent_totals[agent] += sales_value
-                        print(f"  {name} -> {agent}: {sales_value}")
-                else:
-                    print(f"  {name}: Not found in rate.csv")
+            # rate.csvにあるコンテンツのみ処理
+            if name in self.content_names:
+                monthly_content_data[name] = sales_value
+                if sales_value > 0:
+                    print(f"  {name}: {sales_value}円")
+            else:
+                print(f"  {name}: Not found in rate.csv")
         
-        self.monthly_totals[yyyymm] = monthly_agent_totals
+        self.monthly_data[yyyymm] = monthly_content_data
     
-    def calculate_cumulative_totals(self):
-        """累計売上を計算（1万円以上で翌月リセット）"""
-        sorted_months = sorted(self.monthly_totals.keys())
-        
-        for agent in self.agent_groups.keys():
-            cumulative = 0
-            
-            for i, month in enumerate(sorted_months):
-                monthly_total = self.monthly_totals.get(month, {}).get(agent, 0)
-                cumulative += monthly_total
-                
-                if month not in self.cumulative_totals:
-                    self.cumulative_totals[month] = {}
-                
-                self.cumulative_totals[month][agent] = cumulative
-                
-                # 1万円以上になったら翌月リセット（今月の累計は記録してから次月でリセット）
-                if cumulative >= 10000:
-                    print(f"  {agent}: 累計{cumulative}円で1万円超過 -> 翌月リセット")
-                    cumulative = 0
     
     def create_output_excel(self):
         """出力Excel作成"""
-        sorted_months = sorted(self.monthly_totals.keys())
-        sorted_agents = sorted(self.agent_groups.keys())
+        sorted_months = sorted(self.monthly_data.keys())
         
         # データフレーム用のデータを準備
         data = []
@@ -285,12 +228,10 @@ class RoyaltyAggregator:
         for month in sorted_months:
             row = {'売上年月': month}
             
-            for agent in sorted_agents:
-                monthly_total = self.monthly_totals.get(month, {}).get(agent, 0)
-                cumulative_total = self.cumulative_totals.get(month, {}).get(agent, 0)
-                
-                row[f'{agent}売上'] = monthly_total
-                row[f'{agent}累計'] = cumulative_total
+            # rate.csvの順番でコンテンツを処理
+            for content_name in self.content_names:
+                sales_value = self.monthly_data.get(month, {}).get(content_name, 0)
+                row[content_name] = sales_value
             
             data.append(row)
         
@@ -324,9 +265,6 @@ class RoyaltyAggregator:
         for yyyymm in yyyymm_folders:
             self.process_monthly_data(yyyymm)
         
-        # 累計売上を計算
-        self.calculate_cumulative_totals()
-        
         # 出力Excel作成
         self.create_output_excel()
         
@@ -335,13 +273,27 @@ class RoyaltyAggregator:
 
 
 def main():
+    # コマンドライン引数の解析
+    parser = argparse.ArgumentParser(description='ロイヤリティ累計推移表作成ツール')
+    parser.add_argument('yyyymm', nargs='?', help='処理対象年月 (YYYYMM形式、省略時は全年月)')
+    args = parser.parse_args()
+    
     # パスの設定
     royalty_dir = r"C:\Users\OW\Dropbox\disk2とローカルの同期\占い\占い売上\履歴\ロイヤリティ"
     rate_csv_path = r"C:\Users\OW\pj\uriage\rate.csv"
     output_path = r"C:\Users\OW\pj\uriage\コンテンツ別累計推移表.xlsx"
     
+    # 指定年月がある場合は出力ファイル名に反映
+    if args.yyyymm:
+        base_name = os.path.splitext(output_path)[0]
+        extension = os.path.splitext(output_path)[1]
+        output_path = f"{base_name}_{args.yyyymm}{extension}"
+        print(f"指定年月: {args.yyyymm}")
+    else:
+        print("全年月を処理します")
+    
     # 集計実行
-    aggregator = RoyaltyAggregator(royalty_dir, rate_csv_path, output_path)
+    aggregator = RoyaltyAggregator(royalty_dir, rate_csv_path, output_path, args.yyyymm)
     success = aggregator.run()
     
     if success:

@@ -1242,8 +1242,8 @@ class SalesAggregator:
             total_sum = main_amount
             payment_sum = main_amount  # 同じ値を使用
             
-            # 「合計金額」の合計に1.1を乗算した値が「実績」
-            実績 = total_sum * 1.1
+            # 「合計金額」の合計に1.1を除算した値が「実績」
+            実績 = total_sum / 1.1
             # 「お支払い金額」から1.1を除算したものが「情報提供料」
             情報提供料 = payment_sum / 1.1
             
