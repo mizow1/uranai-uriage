@@ -288,6 +288,14 @@ class EmailProcessor:
             cc = "ow-fortune@ml.outward.jp"
             bcc = "mizoguchi@outward.jp"
             
+            # 複数アドレスの場合の処理
+            if ',' in recipient:
+                # 複数アドレスをTOに設定（カンマ区切りのまま）
+                recipient_to = recipient
+                self.logger.info(f"複数メールアドレスをTOに設定: {recipient_to}")
+            else:
+                recipient_to = recipient
+            
             # メール件名を作成（コンテンツ名を含む）
             subject = self._create_payment_notification_subject(target_month, addressee_name, content_id)
             
@@ -297,7 +305,7 @@ class EmailProcessor:
             # メールメッセージを作成
             message = self.create_message_with_attachment(
                 sender=sender,
-                recipient=recipient,
+                recipient=recipient_to,
                 cc=cc,
                 bcc=bcc,
                 subject=subject,

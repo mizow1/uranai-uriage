@@ -301,8 +301,9 @@ class MainController:
                 # A8セルの値を取得
                 addressee_name = self.excel_processor.get_a8_cell_value(excel_path)
                 
+                # 1通のメールで全てのアドレスに送信
                 if self.email_processor.create_payment_notification_draft(
-                    statement.recipient_email,
+                    statement.recipient_email,  # カンマ区切りのまま渡す
                     pdf_path,
                     target_month,
                     statement.content_name,
@@ -325,6 +326,19 @@ class MainController:
         if not email or email == 'default@example.com':
             self.logger.warning(f"無効なメールアドレス: {email}")
             return False
+        
+        # カンマ区切りの場合は全てのメールアドレスを検証
+        if ',' in email:
+            email_list = [addr.strip() for addr in email.split(',')]
+            self.logger.info(f"複数メールアドレス検出: {email_list}")
+            
+            all_valid = True
+            for addr in email_list:
+                if not self.email_processor.validate_email_address(addr):
+                    all_valid = False
+                    self.logger.warning(f"無効なメールアドレス: {addr}")
+            
+            return all_valid
         
         return self.email_processor.validate_email_address(email)
     
