@@ -23,6 +23,7 @@ from openpyxl import load_workbook
 import pywintypes
 import argparse
 import sys
+import shutil
 
 class RoyaltyAggregator:
     def __init__(self, royalty_dir, rate_csv_path, output_path, target_yyyymm=None, start_yyyymm=None, end_yyyymm=None):
@@ -241,6 +242,37 @@ class RoyaltyAggregator:
                 print(f"  {name}: Not found in rate.csv")
         
         self.monthly_data[yyyymm] = monthly_content_data
+        
+        # 月次データ処理完了後、即座に中間保存
+        self.save_intermediate_result(yyyymm)
+    
+    def save_intermediate_result(self, processed_yyyymm):
+        """中間結果を保存"""
+        try:
+            # 既存ファイルがある場合はバックアップを作成
+            if os.path.exists(self.output_path):
+                backup_path = f"{self.output_path}.backup"
+                shutil.copy2(self.output_path, backup_path)
+            
+            # 現在までの処理済みデータでExcelファイルを更新
+            self.create_output_excel()
+            print(f"  → {processed_yyyymm} processed and saved")
+            
+            # バックアップファイルを削除（正常保存完了後）
+            backup_path = f"{self.output_path}.backup"
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+                
+        except Exception as e:
+            print(f"Error saving intermediate result for {processed_yyyymm}: {e}")
+            # エラーが発生した場合、バックアップファイルから復旧を試行
+            backup_path = f"{self.output_path}.backup"
+            if os.path.exists(backup_path):
+                try:
+                    shutil.copy2(backup_path, self.output_path)
+                    print(f"  → Restored from backup due to save error")
+                except:
+                    print(f"  → Failed to restore from backup")
     
     
     def create_output_excel(self):
@@ -286,12 +318,19 @@ class RoyaltyAggregator:
             print("No YYYYMM folders found")
             return False
         
-        # 各月のデータを処理
+        # 各月のデータを処理（各月毎に保存される）
         for yyyymm in yyyymm_folders:
-            self.process_monthly_data(yyyymm)
+            try:
+                self.process_monthly_data(yyyymm)
+            except Exception as e:
+                print(f"Error processing {yyyymm}: {e}")
+                print("Continuing with next month...")
+                continue
         
-        # 出力Excel作成
-        self.create_output_excel()
+        # 最終確認として再保存（万が一のため）
+        if self.monthly_data:
+            print("Creating final output...")
+            self.create_output_excel()
         
         print("=== 処理完了 ===")
         return True
