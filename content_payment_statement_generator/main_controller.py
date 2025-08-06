@@ -50,7 +50,7 @@ class MainController:
             'errors': 0
         }
     
-    def process_payment_statements(self, year: str, month: str, send_emails: bool = True, template_filter: str = None, content_name: str = None) -> bool:
+    def process_payment_statements(self, year: str, month: str, send_emails: bool = True, template_filter: str = None, content_name: str = None, create_drafts: bool = True) -> bool:
         """支払い明細書の完全処理を実行"""
         try:
             self.system_logger.log_system_info()
@@ -90,7 +90,7 @@ class MainController:
                 try:
                     self.system_logger.log_progress(i, total_count, f"処理中: {content_key}")
                     
-                    if self._process_single_statement(statement, year, month, send_emails, content_name):
+                    if self._process_single_statement(statement, year, month, send_emails, content_name, create_drafts):
                         success_count += 1
                     else:
                         self.statistics['errors'] += 1
@@ -274,7 +274,8 @@ class MainController:
         year: str, 
         month: str, 
         send_email: bool,
-        content_name: str = None
+        content_name: str = None,
+        create_drafts: bool = True
     ) -> bool:
         """単一の支払い明細書を処理"""
         try:
@@ -301,7 +302,7 @@ class MainController:
             self.statistics['generated_pdfs'] += 1
             
             # メール下書き作成
-            if send_email and self._validate_email_address(statement.recipient_email):
+            if send_email and create_drafts and self._validate_email_address(statement.recipient_email):
                 # A8セルの値を取得
                 addressee_name = self.excel_processor.get_a8_cell_value(excel_path)
                 

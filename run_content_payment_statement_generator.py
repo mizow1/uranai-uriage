@@ -6,6 +6,7 @@
     python run_content_payment_statement_generator.py 2024 12
     python run_content_payment_statement_generator.py 2024 12 aiga
     python run_content_payment_statement_generator.py 2024 12 --no-email
+    python run_content_payment_statement_generator.py 2024 12 --no-draft
     python run_content_payment_statement_generator.py 2024 12 aiga --test
     python run_content_payment_statement_generator.py 2025 06 2025 08  # 期間指定
 """
@@ -32,6 +33,7 @@ def parse_arguments():
   %(prog)s 2024 12                    # 2024年12月の明細書を生成・送信
   %(prog)s 2024 12 aiga               # 2024年12月のaigaコンテンツのみ生成・送信
   %(prog)s 2024 12 --no-email         # メール送信せずに明細書のみ生成
+  %(prog)s 2024 12 --no-draft         # メール下書き作成をスキップ
   %(prog)s 2024 12 aiga --test        # aigaコンテンツのシステムテストを実行
   %(prog)s 2024 12 --log-level DEBUG  # デバッグレベルでログ出力
   %(prog)s 2025 06 2025 08            # 2025年6月から8月までの期間を処理
@@ -68,6 +70,12 @@ def parse_arguments():
         '--no-email',
         action='store_true',
         help='メール送信をスキップ（明細書生成のみ）'
+    )
+    
+    parser.add_argument(
+        '--no-draft',
+        action='store_true',
+        help='メール下書き作成をスキップ'
     )
     
     parser.add_argument(
@@ -224,6 +232,7 @@ def main():
         if content:
             print(f"対象コンテンツ: {content}")
         print(f"メール送信: {'無効' if args.no_email else '有効'}")
+        print(f"メール下書き作成: {'無効' if args.no_draft else '有効'}")
         print(f"ログレベル: {args.log_level}")
         print("=" * 60)
         
@@ -237,6 +246,7 @@ def main():
         
         # メイン処理を実行
         send_emails = not args.no_email
+        create_drafts = not args.no_draft
         
         # コンテンツ指定がある場合はtemplate_filterとして使用
         template_filter = args.template_filter
@@ -253,7 +263,8 @@ def main():
                 month, 
                 send_emails,
                 template_filter=template_filter,
-                content_name=content
+                content_name=content,
+                create_drafts=create_drafts
             )
             
             if success:
