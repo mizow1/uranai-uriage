@@ -25,11 +25,13 @@ import argparse
 import sys
 
 class RoyaltyAggregator:
-    def __init__(self, royalty_dir, rate_csv_path, output_path, target_yyyymm=None):
+    def __init__(self, royalty_dir, rate_csv_path, output_path, target_yyyymm=None, start_yyyymm=None, end_yyyymm=None):
         self.royalty_dir = royalty_dir
         self.rate_csv_path = rate_csv_path
         self.output_path = output_path
         self.target_yyyymm = target_yyyymm
+        self.start_yyyymm = start_yyyymm
+        self.end_yyyymm = end_yyyymm
         self.rate_data = None
         self.content_names = []
         self.monthly_data = {}
@@ -54,6 +56,29 @@ class RoyaltyAggregator:
         """yyyymm形式のフォルダリストを取得"""
         folders = []
         pattern = re.compile(r'^\d{6}$')  # 6桁の数字
+        
+        # 期間指定の場合（開始年月と終了年月が両方指定されている場合）
+        if self.start_yyyymm and self.end_yyyymm:
+            if not (pattern.match(self.start_yyyymm) and pattern.match(self.end_yyyymm)):
+                print(f"Invalid YYYYMM format: {self.start_yyyymm} or {self.end_yyyymm}")
+                return folders
+            
+            # 全フォルダを取得してフィルタリング
+            all_folders = []
+            for item in os.listdir(self.royalty_dir):
+                if pattern.match(item):
+                    folder_path = os.path.join(self.royalty_dir, item)
+                    if os.path.isdir(folder_path):
+                        all_folders.append(item)
+            
+            # 期間内のフォルダを抽出
+            for folder in all_folders:
+                if self.start_yyyymm <= folder <= self.end_yyyymm:
+                    folders.append(folder)
+            
+            folders.sort()  # 昇順ソート
+            print(f"Period range {self.start_yyyymm} - {self.end_yyyymm}: {folders}")
+            return folders
         
         # 特定年月が指定されている場合
         if self.target_yyyymm:
@@ -275,7 +300,7 @@ class RoyaltyAggregator:
 def main():
     # コマンドライン引数の解析
     parser = argparse.ArgumentParser(description='ロイヤリティ累計推移表作成ツール')
-    parser.add_argument('yyyymm', nargs='?', help='処理対象年月 (YYYYMM形式、省略時は全年月)')
+    parser.add_argument('yyyymm', nargs='*', help='処理対象年月 (YYYYMM形式)\n  省略時: 全年月を処理\n  1つ指定: 指定月のみ処理\n  2つ指定: 指定期間を処理 (例: 202401 202403)')
     args = parser.parse_args()
     
     # パスの設定
@@ -283,17 +308,37 @@ def main():
     rate_csv_path = r"C:\Users\OW\pj\uriage\rate.csv"
     output_path = r"C:\Users\OW\pj\uriage\コンテンツ別累計推移表.xlsx"
     
-    # 指定年月がある場合は出力ファイル名に反映
-    if args.yyyymm:
+    # 引数の処理と出力ファイル名の設定
+    target_yyyymm = None
+    start_yyyymm = None
+    end_yyyymm = None
+    
+    if len(args.yyyymm) == 1:
+        # 単一年月指定
+        target_yyyymm = args.yyyymm[0]
         base_name = os.path.splitext(output_path)[0]
         extension = os.path.splitext(output_path)[1]
-        output_path = f"{base_name}_{args.yyyymm}{extension}"
-        print(f"指定年月: {args.yyyymm}")
+        output_path = f"{base_name}_{target_yyyymm}{extension}"
+        print(f"指定年月: {target_yyyymm}")
+    elif len(args.yyyymm) == 2:
+        # 期間指定
+        start_yyyymm = args.yyyymm[0]
+        end_yyyymm = args.yyyymm[1]
+        # 開始年月と終了年月の順序を確認
+        if start_yyyymm > end_yyyymm:
+            start_yyyymm, end_yyyymm = end_yyyymm, start_yyyymm
+        base_name = os.path.splitext(output_path)[0]
+        extension = os.path.splitext(output_path)[1]
+        output_path = f"{base_name}_{start_yyyymm}-{end_yyyymm}{extension}"
+        print(f"指定期間: {start_yyyymm} ～ {end_yyyymm}")
+    elif len(args.yyyymm) > 2:
+        print("エラー: 年月は最大2つまで指定できます")
+        sys.exit(1)
     else:
         print("全年月を処理します")
     
     # 集計実行
-    aggregator = RoyaltyAggregator(royalty_dir, rate_csv_path, output_path, args.yyyymm)
+    aggregator = RoyaltyAggregator(royalty_dir, rate_csv_path, output_path, target_yyyymm, start_yyyymm, end_yyyymm)
     success = aggregator.run()
     
     if success:
